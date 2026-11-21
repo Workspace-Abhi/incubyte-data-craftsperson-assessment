@@ -43,9 +43,9 @@ skypoints-pipeline/
 │   ├── assumptions.md            # Documented assumptions, edge cases, and limits
 │   └── snowflake-runbook.md      # SnowSQL runbook and smoke test verification matrix
 ├── data/
-│   ├── raw/                      # Original company Excel feeds: IND.xlsx, USA.xlsx, AUS.xlsx
+│   ├── raw/                      # Company originals: IND.csv, USA.csv, AUS.xlsx
 │   ├── samples/                  # sample_member_profile.dat, sample_redemptions.json
-│   └── derived/                  # Generated CSV fallbacks (IND.csv, USA.csv, AUS.csv)
+│   └── derived/                  # Derived CSV fallbacks (e.g. AUS.csv from AUS.xlsx)
 ├── sql/snowflake/
 │   ├── 01_ddl.sql                # DDL for landing, staging, country tables, DLQ, and views
 │   ├── 02_ingestion.sql          # Ingestion template (stages, formats, COPY INTO, streams)
