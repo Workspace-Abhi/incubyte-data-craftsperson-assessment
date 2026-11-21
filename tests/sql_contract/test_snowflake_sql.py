@@ -8,24 +8,26 @@ from pathlib import Path
 
 
 def test_ddl_and_transformations_scripts_exist():
-    base_sql_dir = Path(__file__).resolve().parent.parent / "sql" / "snowflake"
-    ddl_path = base_sql_dir / "ddl.sql"
-    transformations_path = base_sql_dir / "transformations.sql"
-    merges_path = base_sql_dir / "generated_country_merges.sql"
-    mart_finalize_path = base_sql_dir / "03_mart_and_finalize.sql"
+    base_sql_dir = Path(__file__).resolve().parent.parent.parent / "sql" / "snowflake"
+    ddl_path = base_sql_dir / "01_ddl.sql"
+    ingestion_path = base_sql_dir / "02_ingestion.sql"
+    transformations_path = base_sql_dir / "03_transformations.sql"
+    merges_path = base_sql_dir / "04_country_merges.generated.sql"
+    mart_finalize_path = base_sql_dir / "05_mart_and_finalize.sql"
     run_all_path = base_sql_dir / "run_all.sql"
-    smoke_test_path = base_sql_dir / "smoke_test.sql"
+    smoke_test_path = base_sql_dir / "tests" / "smoke_test.sql"
 
-    assert ddl_path.exists(), "ddl.sql must exist"
-    assert transformations_path.exists(), "transformations.sql must exist"
-    assert merges_path.exists(), "generated_country_merges.sql must exist"
-    assert mart_finalize_path.exists(), "03_mart_and_finalize.sql must exist"
+    assert ddl_path.exists(), "01_ddl.sql must exist"
+    assert ingestion_path.exists(), "02_ingestion.sql must exist"
+    assert transformations_path.exists(), "03_transformations.sql must exist"
+    assert merges_path.exists(), "04_country_merges.generated.sql must exist"
+    assert mart_finalize_path.exists(), "05_mart_and_finalize.sql must exist"
     assert run_all_path.exists(), "run_all.sql must exist"
-    assert smoke_test_path.exists(), "smoke_test.sql must exist"
+    assert smoke_test_path.exists(), "tests/smoke_test.sql must exist"
 
 
 def test_snowflake_smoke_test_coverage():
-    smoke_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "smoke_test.sql"
+    smoke_path = Path(__file__).resolve().parent.parent.parent / "sql" / "snowflake" / "tests" / "smoke_test.sql"
     content = smoke_path.read_text(encoding="utf-8")
 
     # Schema isolation
@@ -94,27 +96,27 @@ def test_snowflake_smoke_test_coverage():
 
 
 def test_run_all_script_order():
-    run_all_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "run_all.sql"
+    run_all_path = Path(__file__).resolve().parent.parent.parent / "sql" / "snowflake" / "run_all.sql"
     content = run_all_path.read_text(encoding="utf-8")
 
     assert "run_batch_id is a session variable" in content
 
-    pos_ddl = content.find("!source sql/snowflake/ddl.sql")
-    pos_trans = content.find("!source sql/snowflake/transformations.sql")
-    pos_merges = content.find("!source sql/snowflake/generated_country_merges.sql")
-    pos_finalize = content.find("!source sql/snowflake/03_mart_and_finalize.sql")
+    pos_ddl = content.find("!source sql/snowflake/01_ddl.sql")
+    pos_trans = content.find("!source sql/snowflake/03_transformations.sql")
+    pos_merges = content.find("!source sql/snowflake/04_country_merges.generated.sql")
+    pos_finalize = content.find("!source sql/snowflake/05_mart_and_finalize.sql")
 
-    assert pos_ddl != -1, "run_all.sql must source ddl.sql"
-    assert pos_trans != -1, "run_all.sql must source transformations.sql"
-    assert pos_merges != -1, "run_all.sql must source generated_country_merges.sql"
-    assert pos_finalize != -1, "run_all.sql must source 03_mart_and_finalize.sql"
+    assert pos_ddl != -1, "run_all.sql must source 01_ddl.sql"
+    assert pos_trans != -1, "run_all.sql must source 03_transformations.sql"
+    assert pos_merges != -1, "run_all.sql must source 04_country_merges.generated.sql"
+    assert pos_finalize != -1, "run_all.sql must source 05_mart_and_finalize.sql"
     assert pos_ddl < pos_trans < pos_merges < pos_finalize, (
-        "run_all.sql must execute in order: ddl -> transformations -> merges -> 03_mart_and_finalize"
+        "run_all.sql must execute in order: 01_ddl -> 03_transformations -> 04_merges -> 05_mart_and_finalize"
     )
 
 
 def test_snowflake_ddl_ref_country_map():
-    ddl_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "ddl.sql"
+    ddl_path = Path(__file__).resolve().parent.parent.parent / "sql" / "snowflake" / "01_ddl.sql"
     content = ddl_path.read_text(encoding="utf-8")
     assert "REF_COUNTRY_MAP" in content
     assert "'TABLE_INDIA'" in content
@@ -166,14 +168,14 @@ def test_snowflake_ddl_ref_country_map():
 
 
 def test_snowflake_transformations_and_merge():
-    sql_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "transformations.sql"
+    sql_path = Path(__file__).resolve().parent.parent.parent / "sql" / "snowflake" / "03_transformations.sql"
     content = sql_path.read_text(encoding="utf-8")
-    finalize_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "03_mart_and_finalize.sql"
+    finalize_path = Path(__file__).resolve().parent.parent.parent / "sql" / "snowflake" / "05_mart_and_finalize.sql"
     finalize_content = finalize_path.read_text(encoding="utf-8")
 
     # Static generation pointer and include instruction (replaces scripting block)
-    assert "generated_country_merges.sql" in content
-    assert "!source sql/snowflake/generated_country_merges.sql" in content
+    assert "04_country_merges.generated.sql" in content
+    assert "!source sql/snowflake/04_country_merges.generated.sql" in content
 
     # Batch tracking & landing filters (P1 & P6: incremental claiming & finalization)
     assert "SET run_batch_id = UUID_STRING();" in content
@@ -250,11 +252,11 @@ def test_snowflake_transformations_and_merge():
 
 def test_generated_country_merges_matches_script_output():
     from scripts.generate_country_merges import generate_sql
-    output_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "generated_country_merges.sql"
-    assert output_path.exists(), "generated_country_merges.sql must exist"
+    output_path = Path(__file__).resolve().parent.parent.parent / "sql" / "snowflake" / "04_country_merges.generated.sql"
+    assert output_path.exists(), "04_country_merges.generated.sql must exist"
     expected = generate_sql()
     actual = output_path.read_text(encoding="utf-8")
-    assert actual.strip() == expected.strip(), "generated_country_merges.sql must match generate_country_merges.py output"
+    assert actual.strip() == expected.strip(), "04_country_merges.generated.sql must match generate_country_merges.py output"
 
     # Static SQL assertions on generated country merges
     assert "MERGE INTO TABLE_INDIA target" in actual
@@ -274,8 +276,8 @@ def test_generated_country_merges_matches_script_output():
 
 def test_snowflake_ingestion_ddl_and_metadata():
     """Verify that production ingestion DDL defines stages, file formats, and references METADATA$FILENAME."""
-    ingestion_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "ingestion.sql"
-    assert ingestion_path.exists(), "ingestion.sql must exist"
+    ingestion_path = Path(__file__).resolve().parent.parent.parent / "sql" / "snowflake" / "02_ingestion.sql"
+    assert ingestion_path.exists(), "02_ingestion.sql must exist"
     content = ingestion_path.read_text(encoding="utf-8")
 
     assert "Not executed against a live account" in content

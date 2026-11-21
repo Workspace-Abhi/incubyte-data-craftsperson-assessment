@@ -25,7 +25,7 @@ CREATE OR REPLACE TRANSIENT SCHEMA SKYPOINTS_SMOKE_TEST;
 USE SCHEMA SKYPOINTS_SMOKE_TEST;
 
 -- Step 2: Execute production DDL
-!source sql/snowflake/ddl.sql
+!source sql/snowflake/01_ddl.sql
 
 -- Step 3: Seed initial historical state & load fixtures into landing
 -- Pre-existing historical member in TABLE_USA who moves to India in today's batch.
