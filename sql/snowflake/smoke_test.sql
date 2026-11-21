@@ -100,6 +100,12 @@ SELECT PARSE_JSON('{
 -- Step 5: Run production country merges
 !source sql/snowflake/generated_country_merges.sql
 
+-- Step 5B: Execute Idempotent Rerun (run transformations.sql a second time)
+-- Landing rows have been stamped with PROCESSED_AT, so a rerun processes 0 new rows
+-- and does not duplicate staging or DLQ records.
+!source sql/snowflake/transformations.sql
+!source sql/snowflake/generated_country_merges.sql
+
 -- Step 6: Single evaluation query returning scenario, expected, actual, PASS/FAIL
 WITH AssertionResults AS (
     -- Scenario 1A: Member moving country deleted from old table (TABLE_USA)
@@ -227,6 +233,26 @@ WITH AssertionResults AS (
     FROM RAW_DLQ_QUARANTINE
     WHERE SOURCE_FEED = 'STG_REDEMPTIONS_FLATTENED'
       AND ERROR_REASON = 'Ambiguous member_id across source systems'
+
+    UNION ALL
+
+    -- Scenario 10: Staging member row count unchanged after rerun (idempotent batch tracking)
+    SELECT
+        12 AS test_id,
+        'Rerun idempotency: STG_MEMBER_PROFILE count unchanged on rerun' AS scenario,
+        '6' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM STG_MEMBER_PROFILE
+
+    UNION ALL
+
+    -- Scenario 11: DLQ row count unchanged after rerun (idempotent DLQ merges)
+    SELECT
+        13 AS test_id,
+        'Rerun idempotency: RAW_DLQ_QUARANTINE count unchanged on rerun' AS scenario,
+        '5' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
 )
 SELECT
     scenario,
