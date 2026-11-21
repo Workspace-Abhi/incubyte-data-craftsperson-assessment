@@ -333,3 +333,28 @@ CREATE TABLE IF NOT EXISTS MEMBER_LOYALTY_360 (
     LAST_SYNC_AT         TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
     PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
 );
+
+-- ----------------------------------------------------------------------------
+-- 5B. DYNAMIC ANALYTICAL MART: Member Loyalty 360 Current View
+-- Dynamically recomputes Age and Stale_Member relative to CURRENT_DATE()
+-- to ensure analytical metrics remain fresh for untouched members.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBER_LOYALTY_360_CURRENT AS
+SELECT
+    m.SOURCE_SYSTEM,
+    m.MEMBER_ID,
+    m.MEMBER_NAME,
+    m.COUNTRY,
+    m.TIER_CODE,
+    m.ENROLLMENT_DATE,
+    m.LAST_FLIGHT_DATE,
+    m.AGE,
+    m.STALE_MEMBER,
+    COALESCE(l.TOTAL_REDEMPTIONS, 0) AS TOTAL_REDEMPTIONS,
+    COALESCE(l.TOTAL_MILES_REDEEMED, 0) AS TOTAL_MILES_REDEEMED,
+    COALESCE(l.PENDING_MILES_REDEEMED, 0) AS PENDING_MILES_REDEEMED,
+    l.LAST_REDEMPTION_DATE,
+    COALESCE(l.TOP_PARTNER, 'None') AS TOP_PARTNER,
+    COALESCE(l.LAST_SYNC_AT, CURRENT_TIMESTAMP()) AS LAST_SYNC_AT
+FROM MEMBERS_ALL_CURRENT m
+LEFT JOIN MEMBER_LOYALTY_360 l ON m.SOURCE_SYSTEM = l.SOURCE_SYSTEM AND m.MEMBER_ID = l.MEMBER_ID;
