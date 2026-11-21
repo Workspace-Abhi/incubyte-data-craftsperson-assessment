@@ -54,6 +54,15 @@ class RedemptionParser:
         quarantine: List[QuarantineRecord] = []
 
         for feed in feed_items:
+            if not isinstance(feed, dict):
+                quarantine.append(
+                    QuarantineRecord(
+                        raw_data={"item": str(feed)},
+                        error_reason="Feed item is not a valid JSON object",
+                    )
+                )
+                continue
+
             member_id = sanitize_string(feed.get("member_id"))
             feed_dt_str = sanitize_string(feed.get("feed_date"))
             feed_date, err = parse_and_validate_date(feed_dt_str)
@@ -219,13 +228,9 @@ class RedemptionParser:
 
         return len(rows)
 
-    def build_loyalty_360_mart(self, source_members_table: str = "tmp_latest_members") -> List[Dict[str, Any]]:
-        """Join member profile data with flattened redemptions.
-
-        Sums only COMPLETED miles into total_miles_redeemed, tracking pending miles separately.
-        Quarantines redemptions when member_id is ambiguous across multiple source systems.
-        """
-        # 1. Identify and quarantine redemptions with ambiguous member_id across multiple sources
+    def quarantine_ambiguous_redemptions(self, source_members_table: str = "tmp_latest_members") -> List[QuarantineRecord]:
+        """Identify and quarantine redemptions with ambiguous member_id across multiple sources."""
+        quarantined: List[QuarantineRecord] = []
         try:
             ambiguous_txns = self.conn.execute(f"""
                 SELECT r.txn_id, r.member_id, r.feed_date, r.txn_date, r.partner, r.miles_redeemed, r.status
@@ -239,22 +244,22 @@ class RedemptionParser:
             """).fetchall()
 
             for row in ambiguous_txns:
-                self.quarantined_redemptions.append(
-                    QuarantineRecord(
-                        raw_data={
-                            "txn_id": row[0],
-                            "member_id": row[1],
-                            "feed_date": str(row[2]),
-                            "txn_date": str(row[3]),
-                            "partner": row[4],
-                            "miles_redeemed": row[5],
-                            "status": row[6],
-                        },
-                        error_reason="Ambiguous member_id across source systems",
-                    )
+                rec = QuarantineRecord(
+                    raw_data={
+                        "txn_id": row[0],
+                        "member_id": row[1],
+                        "feed_date": str(row[2]),
+                        "txn_date": str(row[3]),
+                        "partner": row[4],
+                        "miles_redeemed": row[5],
+                        "status": row[6],
+                    },
+                    error_reason="Ambiguous member_id across source systems",
                 )
+                quarantined.append(rec)
 
             if ambiguous_txns:
+                self.quarantined_redemptions.extend(quarantined)
                 self.conn.execute(f"""
                     DELETE FROM stg_redemptions_flattened
                     WHERE member_id IN (
@@ -266,6 +271,59 @@ class RedemptionParser:
                 """)
         except duckdb.CatalogException:
             pass
+        return quarantined
+
+    def build_loyalty_360_mart(self, source_members_table: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Join member profile data with flattened redemptions without side effects.
+
+        Sums only COMPLETED miles into total_miles_redeemed, tracking pending miles separately.
+        Reads from country target tables (table_india, table_usa, table_canada, table_philippines, table_australia)
+        by default, ensuring historical members not in the current batch remain present in the analytical mart.
+        """
+        # Ensure all 5 country target tables exist so UNION ALL is always safe
+        country_tables = [
+            "table_india",
+            "table_usa",
+            "table_canada",
+            "table_philippines",
+            "table_australia",
+        ]
+        for tbl in country_tables:
+            self.conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {tbl} (
+                    source_system VARCHAR NOT NULL DEFAULT 'FLAT_FILE',
+                    member_id VARCHAR NOT NULL,
+                    member_name VARCHAR NOT NULL,
+                    enrollment_date DATE NOT NULL,
+                    last_flight_date DATE,
+                    tier_code VARCHAR,
+                    agent_name VARCHAR,
+                    state VARCHAR,
+                    country VARCHAR,
+                    post_code INTEGER,
+                    dob DATE,
+                    is_active VARCHAR DEFAULT 'A',
+                    age INTEGER,
+                    stale_member VARCHAR(1),
+                    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (source_system, member_id)
+                );
+            """)
+
+        self.conn.execute("""
+            CREATE OR REPLACE TEMP VIEW members_all AS
+            SELECT * FROM table_india
+            UNION ALL
+            SELECT * FROM table_usa
+            UNION ALL
+            SELECT * FROM table_canada
+            UNION ALL
+            SELECT * FROM table_philippines
+            UNION ALL
+            SELECT * FROM table_australia;
+        """)
+
+        members_source = source_members_table if source_members_table else "members_all"
 
         self.conn.execute(f"""
             CREATE OR REPLACE TABLE member_loyalty_360 AS
@@ -297,7 +355,7 @@ class RedemptionParser:
                 r.last_redemption_date,
                 COALESCE(r.top_partner, 'None') AS top_partner,
                 CURRENT_TIMESTAMP AS last_sync_at
-            FROM {source_members_table} m
+            FROM {members_source} m
             LEFT JOIN RedemptionAggs r ON m.member_id = r.member_id;
         """)
 

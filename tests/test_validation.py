@@ -287,3 +287,43 @@ class TestBatchValidationAndDLQ:
         assert len(res.key_collisions) == 0, "Identical duplicate records must not be counted as a collision"
         assert len(res.quarantine_records) == 0
         assert len(res.valid_records) == 2
+
+    def test_sample_flat_file_triggers_both_data_quality_warnings(self):
+        from pathlib import Path
+        from src.flat_file_reader import read_pipe_delimited_file
+        data_path = Path(__file__).parent.parent / "data" / "sample_member_profile.dat"
+        raw_records = read_pipe_delimited_file(str(data_path))
+        result = validate_member_batch(raw_records)
+
+        # Both warnings should trigger on sample_member_profile.dat
+        assert len(result.warnings) == 2
+        id_warning = next(w for w in result.warnings if "Member_Id length differs" in w)
+        assert "22345" in id_warning or "2256" in id_warning
+        assert "batch mode length (6)" in id_warning
+
+        dob_warning = next(w for w in result.warnings if "shares identical DOB" in w)
+        assert "1985-05-03" in dob_warning
+
+    def test_collision_deterministic_tie_break_on_identical_dates(self):
+        # Two records with same date, same ID, different names and different source files
+        rec_a = RawMemberRecord(
+            member_name="Alice A",
+            member_id="TIE_1",
+            enrollment_date="20200101",
+            country="USA",
+            source_file="file_a.dat",
+        )
+        rec_b = RawMemberRecord(
+            member_name="Alice B",
+            member_id="TIE_1",
+            enrollment_date="20200101",
+            country="USA",
+            source_file="file_b.dat",
+        )
+
+        res1 = validate_member_batch([rec_a, rec_b])
+        res2 = validate_member_batch([rec_b, rec_a])
+
+        # Deterministic: file_b > file_a, so Alice B wins regardless of input order
+        assert res1.valid_records[0].member_name == "Alice B"
+        assert res2.valid_records[0].member_name == "Alice B"

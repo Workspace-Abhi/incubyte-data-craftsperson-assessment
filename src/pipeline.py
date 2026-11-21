@@ -17,6 +17,7 @@ class PipelineMetrics:
     valid_records_count: int = 0
     quarantined_records_count: int = 0
     key_collisions_count: int = 0
+    warnings_count: int = 0
     country_table_counts: Dict[str, int] = field(default_factory=dict)
     total_redemptions_parsed: int = 0
     quarantined_redemptions_count: int = 0
@@ -30,6 +31,7 @@ class PipelineResult:
     key_collisions: List[str]
     loyalty_360_data: List[Dict[str, Any]]
     country_data: Dict[str, List[Dict[str, Any]]]
+    warnings: List[str] = field(default_factory=list)
     orphan_redemptions: List[Dict[str, Any]] = field(default_factory=list)
 
 
@@ -97,14 +99,17 @@ class SkyPointsPipeline:
                 valid_redemptions, bad_redemptions = self.redemption_parser.parse_payload(jf.read())
                 redemptions_count = self.redemption_parser.load_redemptions(valid_redemptions)
 
-        # 7. Generate Loyalty 360 mart view (sums only COMPLETED miles)
-        loyalty_360 = self.redemption_parser.build_loyalty_360_mart("tmp_latest_members")
+        # 7. Explicitly quarantine ambiguous redemptions across source systems
+        self.redemption_parser.quarantine_ambiguous_redemptions("tmp_latest_members")
 
-        # 8. Identify orphan redemptions whose member_id does not exist in member data
+        # 8. Generate Loyalty 360 mart view (sums only COMPLETED miles) from union of country tables
+        loyalty_360 = self.redemption_parser.build_loyalty_360_mart()
+
+        # 9. Identify orphan redemptions whose member_id does not exist in member data
         orphan_rows = self.conn.execute("""
             SELECT r.txn_id, r.member_id, r.feed_date, r.txn_date, r.partner, r.miles_redeemed, r.status
             FROM stg_redemptions_flattened r
-            WHERE r.member_id NOT IN (SELECT DISTINCT member_id FROM tmp_latest_members)
+            WHERE r.member_id NOT IN (SELECT DISTINCT member_id FROM members_all)
         """).fetchall()
 
         orphan_redemptions = [
@@ -132,6 +137,7 @@ class SkyPointsPipeline:
             valid_records_count=len(val_result.valid_records),
             quarantined_records_count=len(all_quarantine),
             key_collisions_count=len(val_result.key_collisions),
+            warnings_count=len(val_result.warnings),
             country_table_counts=country_counts,
             total_redemptions_parsed=redemptions_count,
             quarantined_redemptions_count=len(self.redemption_parser.quarantined_redemptions),
@@ -142,6 +148,7 @@ class SkyPointsPipeline:
             metrics=metrics,
             quarantined_records=all_quarantine,
             key_collisions=val_result.key_collisions,
+            warnings=val_result.warnings,
             loyalty_360_data=loyalty_360,
             country_data=country_data,
             orphan_redemptions=orphan_redemptions,

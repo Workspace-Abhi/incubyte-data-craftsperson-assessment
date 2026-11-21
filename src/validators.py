@@ -215,16 +215,20 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
     """Validate a batch of raw records, detecting key collisions and routing errors to DLQ.
 
     Order-independent: Groups by (source_system, member_id). If names differ, keeps
-    the record with latest COALESCE(last_flight_date, enrollment_date), quarantining older
-    conflicting records with reason 'Key collision: superseded by newer record'.
-    Identical duplicate rows (same ID and same name) are not considered collisions.
+    the record with latest COALESCE(last_flight_date, enrollment_date), tie-breaking
+    by source_file name and row order (index). Quarantines older conflicting records
+    with reason 'Key collision: superseded by newer record'.
+
+    Also computes non-blocking batch data quality warnings (member_id length anomalies
+    and DOB concentration > 50%).
     """
+    from collections import Counter
     result = ValidationResult()
 
     # 1. First pass: individual validation and grouping valid records
-    groups: Dict[Tuple[str, str], List[Tuple[CleanMemberRecord, RawMemberRecord]]] = {}
+    groups: Dict[Tuple[str, str], List[Tuple[CleanMemberRecord, RawMemberRecord, int]]] = {}
 
-    for raw in records:
+    for idx, raw in enumerate(records):
         clean, err = validate_member_record(raw)
         if err:
             result.quarantine_records.append(
@@ -237,24 +241,29 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
             key = (clean.source_system, clean.member_id)
             if key not in groups:
                 groups[key] = []
-            groups[key].append((clean, raw))
+            groups[key].append((clean, raw, idx))
 
     # 2. Second pass: evaluate collision and renames per (source_system, member_id)
     for (src_sys, mid), items in groups.items():
-        distinct_names = {c.member_name.strip().lower() for c, _ in items}
+        distinct_names = {c.member_name.strip().lower() for c, _, _ in items}
 
         if len(distinct_names) <= 1:
             # Same name throughout: identical duplicates or multiple events for same person
-            for clean, _ in items:
+            for clean, _, _ in items:
                 result.valid_records.append(clean)
         else:
-            # Names differ: sort by COALESCE(last_flight_date, enrollment_date) DESC
+            # Names differ: sort deterministically by COALESCE(last_flight_date, enrollment_date) DESC,
+            # source_file name DESC, and row index DESC
             items_sorted = sorted(
                 items,
-                key=lambda pair: pair[0].last_flight_date or pair[0].enrollment_date,
+                key=lambda triple: (
+                    triple[0].last_flight_date or triple[0].enrollment_date,
+                    triple[0].source_file or "",
+                    triple[2],
+                ),
                 reverse=True,
             )
-            winner_clean, _ = items_sorted[0]
+            winner_clean, _, _ = items_sorted[0]
             winner_name_norm = winner_clean.member_name.strip().lower()
 
             collision_msg = (
@@ -267,7 +276,7 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
             result.valid_records.append(winner_clean)
 
             # Quarantine older conflicting records
-            for clean, raw in items_sorted[1:]:
+            for clean, raw, _ in items_sorted[1:]:
                 if clean.member_name.strip().lower() != winner_name_norm:
                     result.quarantine_records.append(
                         QuarantineRecord(
@@ -278,5 +287,30 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
                 else:
                     # Same name duplicate of the winning record
                     result.valid_records.append(clean)
+
+    # 3. Non-blocking data quality warnings across valid records in this batch
+    if result.valid_records:
+        # Check A: Member_Id length differs from batch mode length
+        id_lengths = [len(c.member_id) for c in result.valid_records if c.member_id]
+        if id_lengths:
+            len_counts = Counter(id_lengths)
+            mode_len, _ = len_counts.most_common(1)[0]
+            anomalous_ids = [c.member_id for c in result.valid_records if c.member_id and len(c.member_id) != mode_len]
+            if anomalous_ids:
+                result.warnings.append(
+                    f"Data quality warning: Member_Id length differs from batch mode length ({mode_len}). "
+                    f"Anomalous count: {len(anomalous_ids)}, IDs: {sorted(set(anomalous_ids))}"
+                )
+
+        # Check B: More than 50% of the batch shares one identical DOB
+        valid_dobs = [c.dob for c in result.valid_records if c.dob]
+        if valid_dobs and len(result.valid_records) > 0:
+            dob_counts = Counter(valid_dobs)
+            mode_dob, dob_count = dob_counts.most_common(1)[0]
+            if dob_count / len(result.valid_records) > 0.5:
+                result.warnings.append(
+                    f"Data quality warning: More than 50% of batch ({dob_count}/{len(result.valid_records)}) "
+                    f"shares identical DOB: {mode_dob}"
+                )
 
     return result

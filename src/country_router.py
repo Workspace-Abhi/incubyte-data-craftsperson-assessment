@@ -24,6 +24,14 @@ CANONICAL_TABLE_MAP = {
     "AU": "table_australia",
 }
 
+CANONICAL_SNOWFLAKE_TABLE_MAP = {
+    "IND": "TABLE_INDIA",
+    "USA": "TABLE_USA",
+    "CAN": "TABLE_CAN",
+    "PHIL": "TABLE_PHIL",
+    "AU": "TABLE_AU",
+}
+
 
 def normalize_country(country: Optional[str]) -> Optional[str]:
     """Map country aliases to canonical codes (IND, USA, CAN, PHIL, AU).
@@ -100,7 +108,7 @@ class CountryRouter:
                     *,
                     ROW_NUMBER() OVER (
                         PARTITION BY source_system, member_id
-                        ORDER BY COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC
+                        ORDER BY COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC, COALESCE(source_file, '') DESC
                     ) AS rn
                 FROM stg_member_profile
             )
