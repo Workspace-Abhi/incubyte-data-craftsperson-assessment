@@ -24,19 +24,38 @@ def test_snowflake_smoke_test_coverage():
     # Schema isolation
     assert "SKYPOINTS_SMOKE_TEST" in content
 
-    # Coverage for all 7 test cases
+    # Assert no copied transformation or DDL logic
+    assert "INSERT INTO RAW_DLQ_QUARANTINE" not in content, "smoke_test.sql must not copy transformation DLQ logic"
+    assert "MERGE INTO" not in content, "smoke_test.sql must not copy MERGE transformation logic"
+    assert "CREATE OR REPLACE TEMPORARY TABLE DEDUPED" not in content, "smoke_test.sql must not copy dedupe logic"
+
+    # Assert the three !source lines exist in exact order
+    pos_ddl = content.find("!source sql/snowflake/ddl.sql")
+    pos_trans = content.find("!source sql/snowflake/transformations.sql")
+    pos_merges = content.find("!source sql/snowflake/generated_country_merges.sql")
+
+    assert pos_ddl != -1, "smoke_test.sql must source ddl.sql"
+    assert pos_trans != -1, "smoke_test.sql must source transformations.sql"
+    assert pos_merges != -1, "smoke_test.sql must source generated_country_merges.sql"
+    assert pos_ddl < pos_trans < pos_merges, "!source lines must appear in order: ddl -> transformations -> merges"
+
+    # Coverage for all test scenarios
     assert "Member moving country" in content
     assert "Composite key: Same ID in IND_SYS and USA_SYS both survive" in content
     assert "Rename collision: older name quarantined in DLQ" in content
     assert "Rename collision: newer name kept in target table" in content
     assert "Empty-string tier code: treated as null, not quarantined" in content
     assert "Unmapped country: quarantined in DLQ at staging" in content
+    assert "Null country: quarantined in DLQ at staging" in content
     assert "Bad redemption feed_date: quarantined into DLQ" in content
     assert "Duplicate txn_id replay: idempotent merge" in content
+    assert "Ambiguous member_id redemption: quarantined into DLQ" in content
 
     # Final assertion status reporting
-    assert "SELECT" in content
-    assert "CASE WHEN expected_value = actual_value THEN 'PASS' ELSE 'FAIL' END AS status" in content
+    assert "scenario," in content
+    assert "expected," in content
+    assert "actual," in content
+    assert "CASE WHEN expected = actual THEN 'PASS' ELSE 'FAIL' END AS status" in content
 
 
 def test_snowflake_ddl_ref_country_map():
