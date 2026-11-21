@@ -166,8 +166,13 @@ WHERE s.RECORD_TYPE = 'D'
 -- ----------------------------------------------------------------------------
 -- STEP 2B: Collision Resolution (Renames & Key Collisions)
 -- Detects (SOURCE_SYSTEM, MEMBER_ID) groups with differing names.
--- Keeps the row with the latest COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE),
--- quarantines older conflicting rows to RAW_DLQ_QUARANTINE, and removes them from staging.
+-- Identifies the row with the latest COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE),
+-- and quarantines older conflicting rows to RAW_DLQ_QUARANTINE.
+-- NOTE: We do not run a DELETE on STG_MEMBER_PROFILE here because:
+--   1) Matching on (SOURCE_SYSTEM, MEMBER_ID, INGESTED_AT) deletes BOTH the winner
+--      and loser since Snowflake's CURRENT_TIMESTAMP() is identical within a batch.
+--   2) DEDUPED_LATEST_MEMBERS in Step 3 already filters by RN = 1, ensuring only the
+--      latest winning record propagates forward into the country tables.
 -- ----------------------------------------------------------------------------
 INSERT INTO RAW_DLQ_QUARANTINE (RECORD_ID, RAW_RECORD, ERROR_REASON, SOURCE_FEED, QUARANTINED_AT)
 WITH MultiNameGroups AS (
@@ -194,32 +199,6 @@ SELECT
     CURRENT_TIMESTAMP()
 FROM RankedCollisions
 WHERE RN > 1;
-
-DELETE FROM STG_MEMBER_PROFILE target
-WHERE EXISTS (
-    SELECT 1
-    FROM (
-        SELECT
-            s.SOURCE_SYSTEM,
-            s.MEMBER_ID,
-            s.INGESTED_AT,
-            ROW_NUMBER() OVER (
-                PARTITION BY s.SOURCE_SYSTEM, s.MEMBER_ID
-                ORDER BY COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.SOURCE_FILE_NAME
-            ) AS RN
-        FROM STG_MEMBER_PROFILE s
-        JOIN (
-            SELECT SOURCE_SYSTEM, MEMBER_ID
-            FROM STG_MEMBER_PROFILE
-            GROUP BY SOURCE_SYSTEM, MEMBER_ID
-            HAVING COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1
-        ) g ON s.SOURCE_SYSTEM = g.SOURCE_SYSTEM AND s.MEMBER_ID = g.MEMBER_ID
-    ) r
-    WHERE target.SOURCE_SYSTEM = r.SOURCE_SYSTEM
-      AND target.MEMBER_ID = r.MEMBER_ID
-      AND target.INGESTED_AT = r.INGESTED_AT
-      AND r.RN > 1
-);
 
 
 -- ----------------------------------------------------------------------------
@@ -255,33 +234,15 @@ FROM RankedMembers
 WHERE RN = 1;
 
 -- ----------------------------------------------------------------------------
--- STEP 3: Dynamic Country Routing & Migration via Snowflake Scripting
--- Note: This block uses Snowflake Scripting (EXECUTE IMMEDIATE/IDENTIFIER) and
--- is designed as a production runbook; it was not executed against a live Snowflake account.
--- ----------------------------------------------------------------------------
-
--- 1. Quarantine members with unmapped or NULL country (leave existing country rows untouched)
-INSERT INTO RAW_DLQ_QUARANTINE (RECORD_ID, RAW_RECORD, ERROR_REASON, SOURCE_FEED, QUARANTINED_AT)
-SELECT
-    d.MEMBER_ID,
-    CONCAT_WS('|', d.MEMBER_ID, d.MEMBER_NAME, COALESCE(d.COUNTRY, 'NULL_COUNTRY'), d.ENROLLMENT_DATE),
-    'Unmapped or missing country',
-    'STG_MEMBER_PROFILE',
-    CURRENT_TIMESTAMP()
-FROM DEDUPED_LATEST_MEMBERS d
-LEFT JOIN REF_COUNTRY_MAP m ON UPPER(TRIM(d.COUNTRY)) = m.COUNTRY_CODE
-WHERE d.COUNTRY IS NULL OR m.TARGET_TABLE IS NULL;
-
--- ----------------------------------------------------------------------------
--- STEP 3B: Static Country MERGE & Migration DELETE Routing
+-- STEP 3B: Country-Specific Routing & Migration via Static MERGEs
 -- ----------------------------------------------------------------------------
 -- NOTE: To eliminate Snowflake Scripting syntax risks and dynamic IDENTIFIER(:1) execution,
 -- static MERGE and DELETE statements for all country tables are generated directly from
 -- CANONICAL_TABLE_MAP in src/country_router.py into:
 --   sql/snowflake/generated_country_merges.sql
 --
--- Run the generated country merges file right after this step:
--- !include sql/snowflake/generated_country_merges.sql
+-- In SnowSQL CLI, execute:
+-- !source sql/snowflake/generated_country_merges.sql
 -- ----------------------------------------------------------------------------
 
 

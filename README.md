@@ -5,7 +5,7 @@
 [![Methodology](https://img.shields.io/badge/methodology-TDD%20%26%20Clean%20Code-orange.svg)]()
 
 > **Incubyte Data Craftsperson Assessment Solution**  
-> Designed, built, and verified following Software Craftsmanship, Test-Driven Development (TDD), and billion-record scalable engineering practices.
+> Designed and built following Software Craftsmanship, Test-Driven Development (TDD), and scalable engineering practices (Python/DuckDB verified via TDD test suite; Snowflake SQL verified via end-to-end smoke test).
 
 ---
 

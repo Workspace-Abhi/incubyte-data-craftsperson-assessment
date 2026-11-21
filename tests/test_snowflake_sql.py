@@ -73,7 +73,7 @@ def test_snowflake_transformations_and_merge():
 
     # Static generation pointer and include instruction (replaces scripting block)
     assert "generated_country_merges.sql" in content
-    assert "!include sql/snowflake/generated_country_merges.sql" in content
+    assert "!source sql/snowflake/generated_country_merges.sql" in content
 
     # Task 1 & 2: SOURCE_SYSTEM composite dedup and member loyalty mart
     assert "PARTITION BY SOURCE_SYSTEM, MEMBER_ID" in content
@@ -97,6 +97,7 @@ def test_snowflake_transformations_and_merge():
     assert "Key collision: superseded by newer record" in content
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
     assert "ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, SOURCE_FILE_NAME" in content
+    assert "DELETE FROM STG_MEMBER_PROFILE" not in content
 
     # Redemptions DLQ & Idempotent MERGE
     assert "STG_REDEMPTIONS_FLATTENED" in content
