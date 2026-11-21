@@ -1,7 +1,11 @@
-"""Data validation, parsing, and dead-letter queue (DLQ) routing logic."""
+"""Data validation, parsing, domain checks, and dead-letter queue (DLQ) routing logic."""
 from datetime import date, datetime
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any, Set
 from src.models import RawMemberRecord, CleanMemberRecord, QuarantineRecord, ValidationResult
+
+# Valid business domain sets
+VALID_TIER_CODES = {"PLT", "GLD", "SLV"}
+VALID_ACTIVE_FLAGS = {"A", "I"}
 
 
 def sanitize_string(val: Optional[str]) -> Optional[str]:
@@ -14,11 +18,12 @@ def sanitize_string(val: Optional[str]) -> Optional[str]:
     return val_str
 
 
-def parse_and_validate_date(val: Any) -> Tuple[Optional[date], Optional[str]]:
-    """Parse date strings in multiple formats (YYYYMMDD, DDMMYYYY, YYYY-MM-DD, MM/DD/YYYY).
+def parse_and_validate_date(val: Any, format_hint: Optional[str] = None) -> Tuple[Optional[date], Optional[str]]:
+    """Parse date strings according to format hint or standard multi-format parsing.
 
-    Handles edge cases like dropped leading zeros (e.g. 3051985 -> 03051985) and literal 'NULL'.
-    Returns (date_obj, None) on success, or (None, error_message) on failure.
+    Handles edge cases like dropped leading zeros (e.g. 3051985 -> 03051985),
+    USA single-digit month formats (e.g. 6152022 -> 2022-06-15, 1052022 -> 2022-01-05),
+    and invalid calendar months like month 13 (2021-13-13).
     """
     if val is None:
         return None, None
@@ -29,14 +34,52 @@ def parse_and_validate_date(val: Any) -> Tuple[Optional[date], Optional[str]]:
     if s is None:
         return None, None
 
-    # Handle numeric-only strings
+    # 1. Source-specific hint parsing
+    if format_hint and format_hint.upper() in ("USA", "MDDYYYY", "MMDDYYYY"):
+        if s.isdigit():
+            # 7-digit USA date: M (1 digit) + DD (2 digits) + YYYY (4 digits)
+            # E.g. 6152022 -> June 15, 2022; 1052022 -> Jan 05, 2022; 1152022 -> Jan 15, 2022
+            if len(s) == 7:
+                m_str, d_str, y_str = s[0], s[1:3], s[3:]
+                try:
+                    return date(int(y_str), int(m_str), int(d_str)), None
+                except ValueError as e:
+                    return None, f"Invalid USA 7-digit date '{val}': {e}"
+            # 8-digit USA date: MM (2 digits) + DD (2 digits) + YYYY (4 digits)
+            elif len(s) == 8:
+                m_str, d_str, y_str = s[:2], s[2:4], s[4:]
+                try:
+                    return date(int(y_str), int(m_str), int(d_str)), None
+                except ValueError as e:
+                    return None, f"Invalid USA 8-digit date '{val}': {e}"
+
+    if format_hint and format_hint.upper() in ("YYYYMMDD", "FLAT_FILE"):
+        if s.isdigit() and len(s) == 8:
+            try:
+                return datetime.strptime(s, "%Y%m%d").date(), None
+            except ValueError as e:
+                return None, f"Invalid YYYYMMDD date '{val}': {e}"
+
+    # 2. Heuristic parsing for unhinted inputs
     if s.isdigit():
-        # Handle dropped leading zero for 7-digit dates (e.g., 3051985 -> 03051985)
+        # Handle 7-digit DOB dropped leading zero (e.g., 3051985 -> 03051985)
         if len(s) == 7:
-            s = "0" + s
+            # If starts with reasonable month/day, pad with leading 0
+            s_padded = "0" + s
+            # Try DDMMYYYY
+            try:
+                return datetime.strptime(s_padded, "%d%m%Y").date(), None
+            except ValueError:
+                pass
+            # Try USA MDDYYYY fallback
+            try:
+                m_str, d_str, y_str = s[0], s[1:3], s[3:]
+                return date(int(y_str), int(m_str), int(d_str)), None
+            except ValueError:
+                pass
 
         if len(s) == 8:
-            # Check if it starts with a realistic year (1900-2099) -> YYYYMMDD
+            # Check if starts with a realistic year (1900-2099) -> YYYYMMDD
             year_candidate = int(s[:4])
             if 1900 <= year_candidate <= 2099:
                 try:
@@ -44,19 +87,19 @@ def parse_and_validate_date(val: Any) -> Tuple[Optional[date], Optional[str]]:
                 except ValueError:
                     pass
 
-            # Otherwise, test DDMMYYYY (e.g., 03051985 -> May 3, 1985)
+            # Otherwise test DDMMYYYY (e.g., 03051985 -> May 3, 1985)
             try:
                 return datetime.strptime(s, "%d%m%Y").date(), None
             except ValueError:
                 pass
 
-            # Fallback test MMDDYYYY
+            # Test MMDDYYYY
             try:
                 return datetime.strptime(s, "%m%d%Y").date(), None
             except ValueError:
                 pass
 
-    # Common standard delimited date formats
+    # Standard delimited date formats
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%m-%d-%Y"):
         try:
             return datetime.strptime(s, fmt).date(), None
@@ -67,50 +110,80 @@ def parse_and_validate_date(val: Any) -> Tuple[Optional[date], Optional[str]]:
 
 
 def validate_member_record(raw: RawMemberRecord) -> Tuple[Optional[CleanMemberRecord], Optional[str]]:
-    """Validate a single raw member record against business rules and data constraints."""
-    # 1. Mandatory Field: Member Name
+    """Validate a single raw member record against schema constraints, field lengths, and domain values."""
+    # 1. Mandatory Field: Member Name (Max length 255)
     clean_name = sanitize_string(raw.member_name)
     if not clean_name:
         return None, "Missing mandatory field: Member_Name"
+    if len(clean_name) > 255:
+        return None, f"Field length exceeded: Member_Name exceeds 255 characters (length={len(clean_name)})"
 
-    # 2. Mandatory Field: Member ID
+    # 2. Mandatory Field: Member ID (Max length 18 per spec)
     clean_id = sanitize_string(raw.member_id)
     if not clean_id:
         return None, "Missing mandatory field: Member_Id"
+    if len(clean_id) > 18:
+        return None, f"Field length exceeded: Member_Id exceeds 18 characters (length={len(clean_id)})"
 
     # 3. Mandatory Field: Enrollment Date
     enroll_raw = sanitize_string(raw.enrollment_date)
     if not enroll_raw:
         return None, "Missing mandatory field: Enrollment_Date"
 
-    enroll_date, err = parse_and_validate_date(enroll_raw)
+    enroll_date, err = parse_and_validate_date(enroll_raw, format_hint=raw.date_format_hint)
     if err:
         return None, f"Invalid Enrollment_Date: {err}"
     if enroll_date is None:
         return None, "Missing mandatory field: Enrollment_Date"
 
     # 4. Optional Fields Validation
-    flight_date, err = parse_and_validate_date(raw.last_flight_date)
+    flight_date, err = parse_and_validate_date(raw.last_flight_date, format_hint=raw.date_format_hint)
     if err:
         return None, f"Invalid Last_Flight_Date: {err}"
 
-    dob_date, err = parse_and_validate_date(raw.dob)
+    dob_date, err = parse_and_validate_date(raw.dob, format_hint=None)
     if err:
         return None, f"Invalid Date_of_Birth: {err}"
 
-    # Post code parsing
+    # 5. Schema Length & Domain Validations
+    clean_state = sanitize_string(raw.state)
+    if clean_state and len(clean_state) > 5:
+        return None, f"Field length exceeded: State exceeds 5 characters ('{clean_state}')"
+
+    clean_country = sanitize_string(raw.country)
+    if clean_country:
+        clean_country = clean_country.upper()
+        if len(clean_country) > 5:
+            return None, f"Field length exceeded: Country exceeds 5 characters ('{clean_country}')"
+
+    clean_tier = sanitize_string(raw.tier_code)
+    if clean_tier:
+        clean_tier = clean_tier.upper()
+        if len(clean_tier) > 5:
+            return None, f"Field length exceeded: Tier_Code exceeds 5 characters ('{clean_tier}')"
+        if clean_tier not in VALID_TIER_CODES:
+            return None, f"Invalid domain value: Tier_Code '{clean_tier}' is not in {VALID_TIER_CODES}"
+
+    clean_agent = sanitize_string(raw.agent_name)
+    if clean_agent and len(clean_agent) > 255:
+        return None, f"Field length exceeded: Agent_Name exceeds 255 characters"
+
+    # Post code parsing (Max length 5 per spec)
     post_code: Optional[int] = None
     clean_pc = sanitize_string(raw.post_code)
     if clean_pc:
+        if len(clean_pc) > 5:
+            return None, f"Field length exceeded: Post_Code exceeds 5 digits ('{clean_pc}')"
         try:
             post_code = int(clean_pc)
         except ValueError:
-            # Non-blocking or log warning; if strictly int keep as None
-            post_code = None
+            return None, f"Invalid data type: Post_Code must be numeric ('{clean_pc}')"
 
     is_active = sanitize_string(raw.is_active)
     if is_active:
         is_active = is_active.upper()[:1]
+        if is_active not in VALID_ACTIVE_FLAGS:
+            return None, f"Invalid domain value: Is_Active must be in {VALID_ACTIVE_FLAGS} ('{is_active}')"
     else:
         is_active = "A"
 
@@ -119,19 +192,23 @@ def validate_member_record(raw: RawMemberRecord) -> Tuple[Optional[CleanMemberRe
         member_id=clean_id,
         enrollment_date=enroll_date,
         last_flight_date=flight_date,
-        tier_code=sanitize_string(raw.tier_code),
-        agent_name=sanitize_string(raw.agent_name),
-        state=sanitize_string(raw.state),
-        country=sanitize_string(raw.country),
+        tier_code=clean_tier,
+        agent_name=clean_agent,
+        state=clean_state,
+        country=clean_country,
         post_code=post_code,
         dob=dob_date,
         is_active=is_active,
+        source_file=raw.source_file,
     ), None
 
 
 def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
-    """Validate a batch of raw records, separating clean records from quarantined DLQ items."""
+    """Validate a batch of raw records, detecting key collisions and routing errors to DLQ."""
     result = ValidationResult()
+
+    # Track seen member IDs to detect intra-batch key collisions with differing names
+    seen_members: Dict[str, str] = {}
 
     for raw in records:
         clean, err = validate_member_record(raw)
@@ -143,6 +220,23 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
                 )
             )
         else:
-            result.valid_records.append(clean)
+            # Key collision check: same ID but conflicting member name
+            mid = clean.member_id
+            mname = clean.member_name.lower()
+            if mid in seen_members and seen_members[mid] != mname:
+                collision_msg = (
+                    f"Key collision detected: Member_Id '{mid}' reused across multiple people "
+                    f"('{seen_members[mid]}' vs '{clean.member_name}') in source {raw.source_file or 'batch'}"
+                )
+                result.key_collisions.append(collision_msg)
+                result.quarantine_records.append(
+                    QuarantineRecord(
+                        raw_data=raw.__dict__,
+                        error_reason=collision_msg,
+                    )
+                )
+            else:
+                seen_members[mid] = mname
+                result.valid_records.append(clean)
 
     return result

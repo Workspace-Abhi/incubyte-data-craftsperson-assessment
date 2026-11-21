@@ -21,6 +21,7 @@ def test_full_pipeline_with_sample_files():
         json_file_path=json_file,
         csv_file_mappings=csv_mappings,
         reference_date=ref_date,
+        namespace_csv_ids=True,
     )
 
     metrics = result.metrics
@@ -34,10 +35,11 @@ def test_full_pipeline_with_sample_files():
     assert metrics.country_table_counts["table_india"] >= 1
     assert metrics.country_table_counts["table_usa"] >= 1
 
-    # Check Loyalty 360 mart
+    # Check Loyalty 360 mart: COMPLETED miles vs PENDING miles
     assert len(result.loyalty_360_data) > 0
     elena = next(r for r in result.loyalty_360_data if r["member_id"] == "223457")
     assert elena["member_name"] == "Elena"
     assert elena["total_redemptions"] == 2
-    assert elena["total_miles_redeemed"] == 17000
+    assert elena["total_miles_redeemed"] == 12000  # Only COMPLETED miles!
+    assert elena["pending_miles_redeemed"] == 5000  # PENDING miles tracked separately!
     assert elena["top_partner"] in ("AeroLink", "SkyPoints")

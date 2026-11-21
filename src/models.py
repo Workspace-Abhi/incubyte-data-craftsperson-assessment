@@ -17,6 +17,8 @@ class RawMemberRecord:
     post_code: Optional[str] = None
     dob: Optional[str] = None
     is_active: Optional[str] = None
+    source_file: Optional[str] = None
+    date_format_hint: Optional[str] = None
 
 
 @dataclass
@@ -32,6 +34,7 @@ class CleanMemberRecord:
     post_code: Optional[int] = None
     dob: Optional[date] = None
     is_active: Optional[str] = "A"
+    source_file: Optional[str] = None
 
 
 @dataclass
@@ -45,3 +48,4 @@ class QuarantineRecord:
 class ValidationResult:
     valid_records: List[CleanMemberRecord] = field(default_factory=list)
     quarantine_records: List[QuarantineRecord] = field(default_factory=list)
+    key_collisions: List[str] = field(default_factory=list)

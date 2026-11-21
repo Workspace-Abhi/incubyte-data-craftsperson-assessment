@@ -24,7 +24,6 @@ def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
                 continue
 
             parts = [p.strip() for p in clean_line.split("|")]
-            # Filter leading/trailing empty strings resulting from leading/trailing pipes
             if parts and parts[0] == "":
                 parts = parts[1:]
             if parts and parts[-1] == "":
@@ -35,19 +34,17 @@ def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
 
             record_type = parts[0].upper()
             if record_type != "D":
-                # Skip Header ('H') or other metadata lines
                 continue
 
-            # Map positional fields according to assessment specification:
             # Position 1: Member Name
             # Position 2: Member ID
-            # Position 3: Enrollment Date
-            # Position 4: Last Flight Date
+            # Position 3: Enrollment Date (YYYYMMDD)
+            # Position 4: Last Flight Date (YYYYMMDD)
             # Position 5: Tier Code
             # Position 6: Agent Name
             # Position 7: State
             # Position 8: Country
-            # Position 9: DOB (or Post Code / DOB depending on layout)
+            # Position 9: DOB
             # Position 10: Is_Active / Flag
             name = parts[1] if len(parts) > 1 else None
             member_id = parts[2] if len(parts) > 2 else None
@@ -72,32 +69,48 @@ def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
                     country=country,
                     dob=dob,
                     is_active=is_active,
+                    source_file=path.name,
+                    date_format_hint="FLAT_FILE",
                 )
             )
 
     return records
 
 
-def read_csv_file(file_path: FilePath, default_country: Optional[str] = None) -> List[RawMemberRecord]:
+def read_csv_file(
+    file_path: FilePath,
+    default_country: Optional[str] = None,
+    date_format_hint: Optional[str] = None,
+    namespace_ids_by_country: bool = False,
+) -> List[RawMemberRecord]:
     """Read CSV files (e.g. IND.csv, USA.csv, AUS.csv) with flexible column mapping."""
     records: List[RawMemberRecord] = []
     path = Path(file_path)
     if not path.exists():
         return records
 
+    # Auto-detect USA format hint if not provided and filename contains USA
+    hint = date_format_hint
+    if hint is None and "USA" in path.name.upper():
+        hint = "USA"
+
     with open(path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            # Normalize column keys to lowercase without whitespace
             norm_row = {k.strip().lower().replace(" ", "_"): v.strip() for k, v in row.items() if k}
 
-            member_id = norm_row.get("id") or norm_row.get("unique_id") or norm_row.get("member_id")
+            raw_id = norm_row.get("id") or norm_row.get("unique_id") or norm_row.get("member_id")
             member_name = norm_row.get("name") or norm_row.get("member_name")
             enroll_dt = norm_row.get("enrollmentdate") or norm_row.get("enrollment_date") or norm_row.get("date_of_enrollment")
             flight_dt = norm_row.get("flightdate") or norm_row.get("flight_date") or norm_row.get("date_of_flight") or norm_row.get("last_flight_date")
             dob = norm_row.get("dob") or norm_row.get("date_of_birth")
             tier = norm_row.get("tiercode") or norm_row.get("tier_type") or norm_row.get("tier_code")
             country = norm_row.get("country") or default_country
+
+            # Prevent cross-file ID collision if namespacing enabled
+            member_id = raw_id
+            if namespace_ids_by_country and raw_id and country:
+                member_id = f"{country}_{raw_id}"
 
             records.append(
                 RawMemberRecord(
@@ -108,9 +121,9 @@ def read_csv_file(file_path: FilePath, default_country: Optional[str] = None) ->
                     tier_code=tier,
                     country=country,
                     dob=dob,
+                    source_file=path.name,
+                    date_format_hint=hint,
                 )
             )
 
     return records
-
-
