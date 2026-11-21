@@ -252,7 +252,7 @@ USING (
             s.*,
             ROW_NUMBER() OVER (
                 PARTITION BY s.SOURCE_SYSTEM, s.MEMBER_ID
-                ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.LINE_NO DESC
+                ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.LINE_NO DESC
             ) AS RN
         FROM CurrentBatchMembers s
         JOIN MultiNameGroups g ON s.SOURCE_SYSTEM = g.SOURCE_SYSTEM AND s.MEMBER_ID = g.MEMBER_ID
@@ -308,7 +308,7 @@ WITH RankedMembers AS (
         STG_ROW_ID,
         ROW_NUMBER() OVER (
             PARTITION BY SOURCE_SYSTEM, MEMBER_ID 
-            ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, LINE_NO DESC
+            ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, LINE_NO DESC
         ) AS RN
     FROM STG_MEMBER_PROFILE
     WHERE BATCH_ID = $run_batch_id
@@ -347,6 +347,44 @@ WHERE RN = 1;
 -- In SnowSQL CLI, execute:
 -- !source sql/snowflake/generated_country_merges.sql
 -- ----------------------------------------------------------------------------
+
+-- ----------------------------------------------------------------------------
+-- STEP 3C: Audit Out-of-Order / Superseded Records into RAW_DLQ_QUARANTINE
+-- Captures late-arriving older records that are blocked from overwriting newer core records
+-- ----------------------------------------------------------------------------
+MERGE INTO RAW_DLQ_QUARANTINE target
+USING (
+    SELECT
+        src.MEMBER_ID AS RECORD_ID,
+        CONCAT_WS('|', src.SOURCE_SYSTEM, src.MEMBER_ID, src.MEMBER_NAME, src.EXTRACT_DATE, src.LAST_FLIGHT_DATE, src.LINE_NO) AS RAW_RECORD,
+        SHA2(CONCAT_WS('|', src.SOURCE_SYSTEM, src.MEMBER_ID, src.MEMBER_NAME, src.EXTRACT_DATE, src.LAST_FLIGHT_DATE, src.LINE_NO), 256) AS RAW_RECORD_HASH,
+        'Superseded by existing newer record in core table' AS ERROR_REASON,
+        'DEDUPED_LATEST_MEMBERS' AS SOURCE_FEED,
+        src.SOURCE_SYSTEM,
+        src.SOURCE_FILE_NAME,
+        $run_batch_id AS BATCH_ID
+    FROM DEDUPED_LATEST_MEMBERS src
+    JOIN MEMBERS_ALL m ON src.SOURCE_SYSTEM = m.SOURCE_SYSTEM AND src.MEMBER_ID = m.MEMBER_ID
+    WHERE (
+        m.EXTRACT_DATE > src.EXTRACT_DATE
+        OR (
+            m.EXTRACT_DATE = src.EXTRACT_DATE
+            AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+        )
+        OR (
+            m.EXTRACT_DATE = src.EXTRACT_DATE
+            AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+            AND COALESCE(m.LINE_NO, 0) > COALESCE(src.LINE_NO, 0)
+        )
+    )
+) src
+ON target.RECORD_ID = src.RECORD_ID
+AND target.ERROR_REASON = src.ERROR_REASON
+AND target.SOURCE_FEED = src.SOURCE_FEED
+AND target.RAW_RECORD_HASH = src.RAW_RECORD_HASH
+WHEN NOT MATCHED THEN
+    INSERT (RECORD_ID, RAW_RECORD, RAW_RECORD_HASH, ERROR_REASON, SOURCE_FEED, SOURCE_SYSTEM, SOURCE_FILE_NAME, BATCH_ID, QUARANTINED_AT)
+    VALUES (src.RECORD_ID, src.RAW_RECORD, src.RAW_RECORD_HASH, src.ERROR_REASON, src.SOURCE_FEED, src.SOURCE_SYSTEM, src.SOURCE_FILE_NAME, src.BATCH_ID, CURRENT_TIMESTAMP());
 
 
 -- ----------------------------------------------------------------------------

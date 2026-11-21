@@ -196,12 +196,13 @@ def test_snowflake_transformations_and_merge():
     assert "Invalid Last_Flight_Date: unparseable calendar date" in content
     assert "Invalid DOB: unparseable calendar date" in content
 
-    # Key collisions resolution before dedupe & deterministic tie-breaking (P4 recency key)
+    # Key collisions resolution before dedupe & deterministic tie-breaking (P2 & P4 deterministic ranking)
     assert "Key collision: superseded by newer record" in content
     assert "CurrentBatchMembers AS" in content
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
-    assert "ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.LINE_NO DESC" in content
-    assert "ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, LINE_NO DESC" in content
+    assert "ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.LINE_NO DESC" in content
+    assert "ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, LINE_NO DESC" in content
+    assert "Superseded by existing newer record in core table" in content
     assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in content
     assert "DELETE FROM STG_MEMBER_PROFILE" not in content
 

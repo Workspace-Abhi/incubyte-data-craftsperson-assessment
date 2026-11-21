@@ -38,6 +38,12 @@ USING (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
                 )
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND m.COUNTRY <> 'AU'
+                )
             )
       )
 ) src
@@ -47,6 +53,11 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -106,7 +117,7 @@ WHEN NOT MATCHED THEN
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_AU if latest country changed and incoming is newer
+-- Cross-country migration: delete member from TABLE_AU if latest country changed and incoming is newer or equal on tie
 DELETE FROM TABLE_AU target
 WHERE EXISTS (
     SELECT 1
@@ -119,6 +130,11 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
           )
           OR target.EXTRACT_DATE IS NULL
       )
@@ -158,6 +174,12 @@ USING (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
                 )
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND m.COUNTRY <> 'CAN'
+                )
             )
       )
 ) src
@@ -167,6 +189,11 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -226,7 +253,7 @@ WHEN NOT MATCHED THEN
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_CAN if latest country changed and incoming is newer
+-- Cross-country migration: delete member from TABLE_CAN if latest country changed and incoming is newer or equal on tie
 DELETE FROM TABLE_CAN target
 WHERE EXISTS (
     SELECT 1
@@ -239,6 +266,11 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
           )
           OR target.EXTRACT_DATE IS NULL
       )
@@ -278,6 +310,12 @@ USING (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
                 )
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND m.COUNTRY <> 'IND'
+                )
             )
       )
 ) src
@@ -287,6 +325,11 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -346,7 +389,7 @@ WHEN NOT MATCHED THEN
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_INDIA if latest country changed and incoming is newer
+-- Cross-country migration: delete member from TABLE_INDIA if latest country changed and incoming is newer or equal on tie
 DELETE FROM TABLE_INDIA target
 WHERE EXISTS (
     SELECT 1
@@ -359,6 +402,11 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
           )
           OR target.EXTRACT_DATE IS NULL
       )
@@ -398,6 +446,12 @@ USING (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
                 )
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND m.COUNTRY <> 'PHIL'
+                )
             )
       )
 ) src
@@ -407,6 +461,11 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -466,7 +525,7 @@ WHEN NOT MATCHED THEN
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_PHIL if latest country changed and incoming is newer
+-- Cross-country migration: delete member from TABLE_PHIL if latest country changed and incoming is newer or equal on tie
 DELETE FROM TABLE_PHIL target
 WHERE EXISTS (
     SELECT 1
@@ -479,6 +538,11 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
           )
           OR target.EXTRACT_DATE IS NULL
       )
@@ -518,6 +582,12 @@ USING (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
                 )
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND m.COUNTRY <> 'USA'
+                )
             )
       )
 ) src
@@ -527,6 +597,11 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -586,7 +661,7 @@ WHEN NOT MATCHED THEN
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_USA if latest country changed and incoming is newer
+-- Cross-country migration: delete member from TABLE_USA if latest country changed and incoming is newer or equal on tie
 DELETE FROM TABLE_USA target
 WHERE EXISTS (
     SELECT 1
@@ -599,6 +674,11 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
           )
           OR target.EXTRACT_DATE IS NULL
       )
