@@ -5,7 +5,7 @@
 [![Methodology](https://img.shields.io/badge/methodology-TDD%20%26%20Clean%20Code-orange.svg)]()
 
 > **Incubyte Data Craftsperson Assessment Solution**  
-> Designed and built following Software Craftsmanship, Test-Driven Development (TDD), and scalable engineering practices (Python/DuckDB verified by the pytest suite; Snowflake SQL verified by smoke_test.sql on a Snowflake trial account on <DATE> (results below)).
+> Designed and built following Software Craftsmanship, Test-Driven Development (TDD), and scalable engineering practices (Python/DuckDB verified by the pytest suite; Snowflake SQL has not yet been executed; run smoke_test.sql and paste results below).
 
 ---
 
@@ -175,12 +175,12 @@ To verify the SQL behaviorally against a live Snowflake warehouse (without mock 
 4. Review the final assertion result table. It validates all assertions before and after rerun via `run_all.sql`.
 
 #### Smoke Test Results
-> **Verification run**: Trial Snowflake account on `<DATE>`
+> **Verification status**: Snowflake SQL has not yet been executed; run sql/snowflake/smoke_test.sql on a Snowflake trial account and paste results below (Date: <DATE>).
 
 | Test ID | Scenario | Expected | Actual | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | Member moving country: deleted from old TABLE_USA | 0 | | |
-| 2 | Member moving country: inserted into new TABLE_INDIA | 1 | | |
+| 2 | Newer extract date move: inserted into new TABLE_INDIA | 1 | | |
 | 3 | Composite key: Same ID in IND_SYS and USA_SYS both survive | 2 | | |
 | 4 | Rename collision: older name quarantined in DLQ | 1 | | |
 | 5 | Rename collision: newer name kept in target table | Alice Green | | |
@@ -188,10 +188,24 @@ To verify the SQL behaviorally against a live Snowflake warehouse (without mock 
 | 7 | Unmapped country: quarantined in DLQ at staging | 1 | | |
 | 8 | Null country: quarantined in DLQ at staging | 1 | | |
 | 9 | Bad redemption feed_date: quarantined into DLQ | 1 | | |
-| 10 | Duplicate txn_id replay: idempotent merge (miles not doubled) | 5000 | | |
-| 11 | Ambiguous member_id redemption: quarantined into DLQ | 1 | | |
-| 12 | Rerun idempotency: STG_MEMBER_PROFILE count unchanged on rerun | 6 | | |
-| 13 | Rerun idempotency: RAW_DLQ_QUARANTINE count unchanged on rerun | 5 | | |
+| 10 | Mart before rerun: MEMBER_LOYALTY_360 total member rows | 5 | | |
+| 11 | Mart before rerun: MOVE_101 country updated to IND | 1 | | |
+| 12 | Mart before rerun: MOVE_101 COMPLETED miles summed correctly | 5000 | | |
+| 13 | Mart before rerun: MOVE_101 PENDING miles tracked separately | 0 | | |
+| 14 | Ambiguous member_id redemption: quarantined into DLQ | 1 | | |
+| 15 | Rerun delta: STG_MEMBER_PROFILE row count unchanged | 0 | | |
+| 16 | Rerun delta: RAW_DLQ_QUARANTINE row count unchanged | 0 | | |
+| 17 | Rerun delta: STG_REDEMPTIONS_FLATTENED row count unchanged | 0 | | |
+| 18 | Rerun delta: MEMBER_LOYALTY_360 row count unchanged | 0 | | |
+| 19 | DLQ reject preservation: two rows with missing member_id both quarantined | 2 | | |
+| 20 | DLQ reject preservation: same ID in two source systems both bad both quarantined | 2 | | |
+| 21 | DLQ reject preservation: same bad row in two batches yields 2 DLQ rows | 2 | | |
+| 22 | Rename across two batches: no DLQ row created | 0 | | |
+| 23 | Rename across two batches: newest name wins in target table | Updated Name | | |
+| 24 | Ambiguity round trip: redemptions return to mart when ambiguity disappears | 3000 | | |
+| 25 | Invalid DOB: quarantined into DLQ | 1 | | |
+| 26 | Non-numeric miles: quarantined into DLQ without abort | 1 | | |
+| 27 | POST_CODE present in country target table | 40001 | | |
 
 > [!NOTE]
 > Automated pytest tests verify SQL contract and syntax structure locally. True behavioral verification (merges, deletes, deduplication, quarantine) is performed directly on a Snowflake warehouse via `sql/snowflake/smoke_test.sql`.
@@ -209,33 +223,32 @@ Outputs live formatted tables showing ingestion metrics, DLQ quarantine items, c
 1. **Member Name vs Member ID as Primary Key**:
    - The assessment brief table marks `Member Name` as `Key Column: Y` and `Member ID` as `Key Column: N`.
    - In airline domain architecture, passenger names are non-unique (homonyms). `Member ID` is the true unique surrogate key. Our architecture treats `Member ID` as the primary key while strictly enforcing `Member Name` as mandatory non-null.
-2. **Post Code Specification Omission in Sample Data**:
-   - PDF Page 2 lists `Post Code (Position 9, INT, N)`.
-   - However, the actual sample flat file feed on the exact same page contains 11 pipe-delimited values and omits the Post Code field:
-     `|D|Elena|223457|20101012|20121013|GLD|Sam|CA|USA|03051985|A`
-   - Both Snowflake DDL and Python validation support length checks (up to 5 digits) and numeric type checks for `Post_Code` when present, while tolerating feeds where it is absent.
-3. **Mandatory Country & DLQ Routing**:
-   - `Country` is treated as mandatory. The assessment brief did not specify what to do with unmapped or missing countries, so our pipeline quarantines them to the DLQ (`RAW_DLQ_QUARANTINE`) rather than dropping them silently or inventing fallback values.
-4. **Cross-Source System Move Limitation**:
-   - Member IDs are scoped by `source_system` (`FLAT_FILE`, `IND`, `USA`, `AUS`) to avoid data loss from ID reuse across different feeds (such as IDs `1, 2, 3` in `IND.csv` and `USA.csv`).
-   - Moving across CSV source files cannot be tracked cross-source because IDs like `'1'` in `USA.csv` and `IND.csv` refer to distinct individuals; tracking moves across disparate sources requires a centralized enterprise member registry.
-5. **Domain Value Assumptions & String Sanitization**:
-   - Valid tiers are strictly `{'PLT', 'GLD', 'SLV'}` and valid active flags are `{'A', 'I'}`. Out-of-domain values are quarantined to the DLQ.
-   - Empty/whitespace strings and literal strings `'NULL'` / `'NONE'` (case-insensitive) are sanitized to NULL. Optional fields allow NULL, while mandatory fields are quarantined.
-6. **Generated Country Merges & Zero-Drift SQL**:
-   - To eliminate Snowflake Scripting syntax risks (`EXECUTE IMMEDIATE`, dynamic cursor loops, `IDENTIFIER(:1)`), static MERGE and DELETE blocks are generated by [`scripts/generate_country_merges.py`](scripts/generate_country_merges.py) into [`sql/snowflake/generated_country_merges.sql`](sql/snowflake/generated_country_merges.sql).
-   - This ensures zero drift between Python and Snowflake mappings, guaranteed live-account portability, and regression prevention via pytest.
-7. **COMPLETED vs PENDING Redemption Miles**:
-   - `total_miles_redeemed` reflects cleared mileage balance (`status = 'COMPLETED'`), while `pending_miles_redeemed` tracks unsettled transactions separately to ensure financial accuracy.
-8. **DuckDB as a Local Stand-in for Billion-Row Snowflake Design**:
+2. **Missing `Is_Active` Defaults to `'A'`**:
+   - Feeds with missing or empty active flags default to active status (`'A'`), in alignment with loyalty industry enrollment standards where newly registered members are active by default. Out-of-domain values (other than `'A'` or `'I'`) are quarantined.
+3. **Null `Last_Flight_Date` is Flagged Stale (`'Y'`)**:
+   - Members with no recorded flight history (`LAST_FLIGHT_DATE IS NULL`) are treated as stale (`> 90 days`), ensuring inactive accounts are highlighted for marketing reactivation.
+4. **Mandatory Country & DLQ Routing**:
+   - `Country` is treated as mandatory. Records with NULL or unmapped country cannot be routed to any country-specific table and are quarantined to the DLQ (`RAW_DLQ_QUARANTINE`) with explicit error reasons rather than dropping them silently or inventing fallback values.
+5. **`EXTRACT_DATE` Derivation & Deterministic Ranking**:
+   - `EXTRACT_DATE` is derived from the first 8 consecutive digits (`YYYYMMDD`) in `SOURCE_FILE_NAME`, falling back to `INGESTED_AT::DATE`.
+   - Record recency and tie-breaking follow a strict deterministic order: `(EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, LINE_NO DESC)`. This guarantees reproducible deduplication without relying on random UUIDs or file name strings.
+6. **Post Code Specification & `NUMBER(5,0)` Representation**:
+   - The assessment PDF lists `Post Code (Position 9, INT, N)`, but the sample flat file feed contains 11 pipe-delimited values and omits `Post Code`. Both Snowflake DDL and Python validation support `Post_Code` when present while tolerating feeds where it is omitted.
+   - `POST_CODE` is defined as `NUMBER(5,0)` in country target tables; numeric representation strips leading zeros (e.g., Australian or US postcodes such as `0300` are stored as `300`).
+7. **Cross-Source System Move Limitation**:
+   - Member IDs are scoped by `source_system` (`FLAT_FILE`, `IND`, `USA`, `AUS`) to avoid data loss from ID reuse across different feeds (e.g., IDs `1, 2, 3` appearing in both `IND.csv` and `USA.csv`).
+   - Cross-source system moves cannot be tracked automatically without a centralized enterprise master data registry; migration deletes are therefore scoped to within the same `SOURCE_SYSTEM`.
+8. **Separate Python and SQL Implementations**:
+   - Python/DuckDB and Snowflake SQL are independent implementations of the identical business logic, not a transpiled or unified engine. Schema changes, sanitization rules, and routing conditions are maintained consistently across both.
+9. **DuckDB Local Stand-In & Pytest SQL Contract Tests**:
    - For local development, testing, and CI/CD demonstration, DuckDB is utilized as an in-memory embedded OLAP engine.
-   - In production for billions of records, the architecture maps to Snowflake Snowpipe auto-ingest, micro-partition clustering on `(MEMBER_ID, LAST_UPDATED_AT)`, and scheduled Snowflake Tasks or dbt models executing the transformation SQL.
-9. **Dual Python and SQL Implementations**:
-   - Python and SQL are separate implementations of the same business logic, not a single engine; business logic changes must be kept in sync across both manually.
-10. **DuckDB Local Stand-In vs Snowflake SQL Dialect**:
-    - The local pytest suite runs against DuckDB as an in-memory stand-in; dialect differences (e.g. Snowflake's `LATERAL FLATTEN` vs DuckDB's `unnest`, session variable syntax, and `!source` directives) mean the Snowflake SQL is not covered by pytest beyond structural syntax and contract tests. Full behavioral validation requires executing `sql/snowflake/smoke_test.sql` against a live Snowflake account.
-11. **Tie-Breaking with Random UUID (`STG_ROW_ID`)**:
-    - The Snowflake SQL uses `STG_ROW_ID` (a random UUID generated via `UUID_STRING()` at staging insert) as the final tie-breaker after dates and timestamps. This guarantees deterministic selection within a single pipeline run, but two runs over the same input data with identical timestamps could choose different winners if staging is completely reloaded from scratch.
+   - Dialect differences (e.g., Snowflake's `LATERAL FLATTEN` vs DuckDB's `unnest`, session variables, and `!source` directives) mean Snowflake SQL cannot be fully executed by DuckDB locally. Pytest performs comprehensive contract and syntax tests, while full behavioral validation is conducted by running `sql/snowflake/smoke_test.sql` directly on a Snowflake warehouse.
+10. **COMPLETED vs PENDING Redemption Miles**:
+    - `total_miles_redeemed` reflects cleared mileage balance (`status = 'COMPLETED'`), while `pending_miles_redeemed` tracks unsettled transactions separately to ensure financial accuracy.
+11. **`data/AUS.xlsx` Workbook Preservation**:
+    - The repository retains `data/AUS.xlsx` as the raw, original assessment spreadsheet artifact, while `data/AUS.csv` serves as the standardized, UTF-8 encoded comma-delimited feed consumed by the automated pipeline.
+12. **Generated Country Merges & Zero-Drift SQL**:
+    - Static MERGE and DELETE blocks are generated by [`scripts/generate_country_merges.py`](scripts/generate_country_merges.py) into [`sql/snowflake/generated_country_merges.sql`](sql/snowflake/generated_country_merges.sql) to eliminate runtime dynamic SQL / scripting risks while guaranteeing zero drift between Python and Snowflake mappings.
 
 ---
 
@@ -254,8 +267,11 @@ incubyte-data-craftsperson-assessment/
 ├── sql/
 │   └── snowflake/
 │       ├── ddl.sql                 # Production Snowflake table & view DDLs
+│       ├── ingestion.sql           # Snowpipe ingestion DDL, stages & file formats
+│       ├── transformations.sql     # Staging derivations, deduplication & JSON flattening
 │       ├── generated_country_merges.sql # Generated static country MERGE statements
-│       ├── transformations.sql     # Staging derivations & country split SQL
+│       ├── 03_mart_and_finalize.sql# Mart refresh & landing batch finalization
+│       ├── run_all.sql             # Unified SnowSQL runner for production pipeline
 │       └── smoke_test.sql          # Self-contained live Snowflake verification script
 ├── src/
 │   ├── models.py                   # Dataclasses & schema models

@@ -28,13 +28,14 @@ USE SCHEMA SKYPOINTS_SMOKE_TEST;
 !source sql/snowflake/ddl.sql
 
 -- Step 3: Seed initial historical state & load fixtures into landing
--- Pre-existing historical member in TABLE_USA who moves to India in today's batch
+-- Pre-existing historical member in TABLE_USA who moves to India in today's batch.
+-- Seeded with higher flight date (2023-08-01) but older extract date (2023-01-01).
 INSERT INTO TABLE_USA (
     SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
-    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, AGE, STALE_MEMBER
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE
 ) VALUES (
-    'FLAT_FILE', 'MOVE_101', 'David Miller', DATE '2020-01-01', DATE '2021-05-01',
-    'GLD', 'AgentA', 'CA', 'USA', DATE '1985-05-03', 'A', 38, 'Y'
+    'FLAT_FILE', 'MOVE_101', 'David Miller', DATE '2020-01-01', DATE '2023-08-01',
+    'GLD', 'AgentA', 'CA', 'USA', 90210, DATE '1985-05-03', 'A', 38, 'Y', DATE '2023-01-01'
 );
 
 -- Member landing fixtures covering all test scenarios (loaded in a single batch)
@@ -42,8 +43,8 @@ INSERT INTO RAW_MEMBER_LANDING (
     RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
     TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
 ) VALUES
--- 1. Member MOVE_101 moving country to IND with newer flight date
-('D', 'FLAT_FILE', 'MOVE_101', 'David Miller', '20200101', '20230115', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'today_batch.dat'),
+-- 1. Member MOVE_101 moving country to IND with lower flight date (20210501) but newer extract date (20240115)
+('D', 'FLAT_FILE', 'MOVE_101', 'David Miller', '20200101', '20210501', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'today_batch_20240115.dat'),
 
 -- 2. Same raw ID 'DUP_1' across two distinct source systems
 ('D', 'IND_SYS', 'DUP_1', 'Vikas Patel', '20220101', '20230615', 'SLV', 'AgentB', 'DL', 'IND', '15081995', 'A', '11001', 'IND.csv'),
@@ -186,10 +187,10 @@ WITH AssertionResults AS (
 
     UNION ALL
 
-    -- Scenario 1B: Member moving country inserted into new table (TABLE_INDIA)
+    -- Scenario 1B: Newer extract date move: inserted into new TABLE_INDIA
     SELECT
         2 AS test_id,
-        'Member moving country: inserted into new TABLE_INDIA' AS scenario,
+        'Newer extract date move: inserted into new TABLE_INDIA' AS scenario,
         '1' AS expected,
         TO_VARCHAR(COUNT(*)) AS actual
     FROM TABLE_INDIA

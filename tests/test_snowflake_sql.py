@@ -42,6 +42,7 @@ def test_snowflake_smoke_test_coverage():
 
     # Coverage for test scenarios
     assert "Member moving country" in content
+    assert "Newer extract date move: inserted into new TABLE_INDIA" in content
     assert "Composite key: Same ID in IND_SYS and USA_SYS both survive" in content
     assert "Rename collision: older name quarantined in DLQ" in content
     assert "Rename collision: newer name kept in target table" in content
