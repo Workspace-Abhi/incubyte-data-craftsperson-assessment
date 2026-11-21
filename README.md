@@ -126,7 +126,7 @@ python -m src.main
 ```bash
 python -m pytest tests/ -v
 ```
-All 31+ unit and integration tests validate parsing, derivations, country routing, JSON flattening, and full pipeline execution.
+All 35 unit and integration tests validate parsing, validations, derivations, country routing, JSON flattening, and full pipeline execution.
 
 ### 2. Run the Live Demonstration Pipeline
 ```bash
@@ -136,7 +136,28 @@ Outputs live formatted tables showing ingestion metrics, DLQ quarantine items, c
 
 ---
 
-## 5. Repository Structure
+## 5. Design Assumptions, Trade-offs & Specification Clarifications
+
+1. **Member Name vs Member ID Key Column**:
+   - The assessment brief table marks `Member Name` as `Key Column: Y` and `Member ID` as `Key Column: N`.
+   - In airline domain architecture, names are non-unique (multiple passengers can share the same name). `Member ID` is the true unique surrogate key. Our architecture treats `Member ID` as the primary key while strictly enforcing `Member Name` as mandatory non-null.
+2. **Post Code Specification Omission in Sample Data**:
+   - PDF Page 2 lists `Post Code (Position 9, INT, N)`.
+   - However, the actual sample flat file feed on the exact same page contains 11 pipe-delimited values and omits the Post Code field:
+     `|D|Elena|223457|20101012|20121013|GLD|Sam|CA|USA|03051985|A`
+   - Our reader handles both positional layouts gracefully.
+3. **Multi-Source ID Namespacing (Cross-File Collision Prevention)**:
+   - When ingesting separate regional extracts (`IND.csv`, `USA.csv`, `AUS.csv`), local source systems often reset auto-increment sequences (e.g. ID 1 for Vikas in IND, ID 1 for Sam in USA).
+   - Our pipeline supports country-prefixed namespacing (`namespace_csv_ids=True`) and explicit intra-batch collision detection to prevent cross-file data loss.
+4. **COMPLETED vs PENDING Redemption Miles**:
+   - `total_miles_redeemed` reflects cleared mileage balance (`status = 'COMPLETED'`), while `pending_miles_redeemed` tracks unsettled transactions separately to ensure financial accuracy.
+5. **Snowflake Physical Architecture**:
+   - Country separation is achieved via physically separated country target tables (`TABLE_INDIA`, `TABLE_USA`, etc.) clustered on `MEMBER_ID`.
+   - Age calculation in Snowflake uses exact calendar math (`DATEDIFF(year, ...) - CASE WHEN ...`) rather than `/ 365.25` approximation.
+
+---
+
+## 6. Repository Structure
 ```text
 incubyte-data-craftsperson-assessment/
 ├── data/
