@@ -24,19 +24,41 @@ def test_snowflake_smoke_test_coverage():
     # Schema isolation
     assert "SKYPOINTS_SMOKE_TEST" in content
 
-    # Coverage for all 7 test cases
+    # Assert no copied transformation or DDL logic
+    assert "INSERT INTO RAW_DLQ_QUARANTINE" not in content, "smoke_test.sql must not copy transformation DLQ logic"
+    assert "MERGE INTO" not in content, "smoke_test.sql must not copy MERGE transformation logic"
+    assert "CREATE OR REPLACE TEMPORARY TABLE DEDUPED" not in content, "smoke_test.sql must not copy dedupe logic"
+
+    # Assert the three !source lines exist in exact order and test rerun idempotency
+    pos_ddl = content.find("!source sql/snowflake/ddl.sql")
+    pos_trans = content.find("!source sql/snowflake/transformations.sql")
+    pos_merges = content.find("!source sql/snowflake/generated_country_merges.sql")
+
+    assert pos_ddl != -1, "smoke_test.sql must source ddl.sql"
+    assert pos_trans != -1, "smoke_test.sql must source transformations.sql"
+    assert pos_merges != -1, "smoke_test.sql must source generated_country_merges.sql"
+    assert pos_ddl < pos_trans < pos_merges, "!source lines must appear in order: ddl -> transformations -> merges"
+    assert content.count("!source sql/snowflake/transformations.sql") >= 2, "smoke_test.sql must test rerun idempotency by sourcing transformations twice"
+
+    # Coverage for all test scenarios
     assert "Member moving country" in content
     assert "Composite key: Same ID in IND_SYS and USA_SYS both survive" in content
     assert "Rename collision: older name quarantined in DLQ" in content
     assert "Rename collision: newer name kept in target table" in content
     assert "Empty-string tier code: treated as null, not quarantined" in content
     assert "Unmapped country: quarantined in DLQ at staging" in content
+    assert "Null country: quarantined in DLQ at staging" in content
     assert "Bad redemption feed_date: quarantined into DLQ" in content
     assert "Duplicate txn_id replay: idempotent merge" in content
+    assert "Ambiguous member_id redemption: quarantined into DLQ" in content
+    assert "Rerun idempotency: STG_MEMBER_PROFILE count unchanged on rerun" in content
+    assert "Rerun idempotency: RAW_DLQ_QUARANTINE count unchanged on rerun" in content
 
     # Final assertion status reporting
-    assert "SELECT" in content
-    assert "CASE WHEN expected_value = actual_value THEN 'PASS' ELSE 'FAIL' END AS status" in content
+    assert "scenario," in content
+    assert "expected," in content
+    assert "actual," in content
+    assert "CASE WHEN expected = actual THEN 'PASS' ELSE 'FAIL' END AS status" in content
 
 
 def test_snowflake_ddl_ref_country_map():
@@ -58,6 +80,11 @@ def test_snowflake_ddl_ref_country_map():
     assert "'IND' AS canonical" in content
     assert "'AUS', 'AU', 'TABLE_AU'" in content
 
+    # Batch tracking and row ID columns in DDL
+    assert "BATCH_ID             VARCHAR(50)" in content
+    assert "PROCESSED_AT         TIMESTAMP_NTZ" in content
+    assert "STG_ROW_ID          VARCHAR          DEFAULT UUID_STRING()" in content
+
     # Task 4: MEMBERS_ALL unified country view
     assert "CREATE OR REPLACE VIEW MEMBERS_ALL AS" in content
     assert "SELECT * FROM TABLE_INDIA" in content
@@ -74,6 +101,13 @@ def test_snowflake_transformations_and_merge():
     # Static generation pointer and include instruction (replaces scripting block)
     assert "generated_country_merges.sql" in content
     assert "!source sql/snowflake/generated_country_merges.sql" in content
+
+    # Batch tracking & landing filters
+    assert "SET run_batch_id = UUID_STRING();" in content
+    assert "WHERE PROCESSED_AT IS NULL" in content
+    assert "UPDATE RAW_MEMBER_LANDING" in content
+    assert "UPDATE RAW_REDEMPTIONS_LANDING" in content
+    assert "SET PROCESSED_AT = CURRENT_TIMESTAMP(), BATCH_ID = $run_batch_id" in content
 
     # Task 1 & 2: SOURCE_SYSTEM composite dedup and member loyalty mart
     assert "PARTITION BY SOURCE_SYSTEM, MEMBER_ID" in content
@@ -93,10 +127,12 @@ def test_snowflake_transformations_and_merge():
     assert "Invalid domain value: Is_Active must be in (A, I)" in content
     assert "Invalid Last_Flight_Date: unparseable calendar date" in content
 
-    # Key collisions resolution before dedupe & tie-breaking
+    # Key collisions resolution before dedupe & deterministic tie-breaking
     assert "Key collision: superseded by newer record" in content
+    assert "HAVING COUNT(CASE WHEN BATCH_ID = $run_batch_id THEN 1 END) > 0" in content
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
-    assert "ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, SOURCE_FILE_NAME" in content
+    assert "ORDER BY COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.STG_ROW_ID" in content
+    assert "ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, STG_ROW_ID" in content
     assert "DELETE FROM STG_MEMBER_PROFILE" not in content
 
     # Redemptions DLQ & Idempotent MERGE
@@ -111,6 +147,7 @@ def test_snowflake_transformations_and_merge():
     assert "MERGE INTO MEMBER_LOYALTY_360 target" in content
     assert "FROM MEMBERS_ALL m" in content
     assert "WHERE EXISTS" in content.split("STEP 5")[1]
+    assert "red.BATCH_ID = $run_batch_id" in content
     assert "CREATE OR REPLACE TABLE MEMBER_LOYALTY_360" not in content
 
 
