@@ -21,6 +21,15 @@ class TestDateParsingAndValidation:
         assert err is None
         assert result == date(2022, 1, 15)
 
+    def test_parse_iso_datetime_string_with_time(self):
+        result, err = parse_and_validate_date("2022-05-11 00:00:00")
+        assert err is None
+        assert result == date(2022, 5, 11)
+
+        result_t, err_t = parse_and_validate_date("2022-05-11T12:30:00")
+        assert err_t is None
+        assert result_t == date(2022, 5, 11)
+
     def test_parse_dob_ddmmyyyy_with_leading_zero(self):
         result, err = parse_and_validate_date("03051985")
         assert err is None

@@ -1,8 +1,8 @@
 # SkyPoints Airline Loyalty ETL Pipeline
 
-[![Test Suite](https://img.shields.io/badge/pytest-63%20passed-brightgreen.svg)]()
+[![Test Suite](https://img.shields.io/badge/pytest-66%20passed-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)]()
-[![Snowflake SQL](https://img.shields.io/badge/Snowflake-Verified%20Contracts-orange.svg)]()
+[![Snowflake SQL](https://img.shields.io/badge/Snowflake-SQL%20Contracts%20Verified-blue.svg)]()
 [![Architecture](https://img.shields.io/badge/architecture-Modular%20Layered-purple.svg)]()
 
 > **Incubyte Data Craftsperson Assessment Solution**  

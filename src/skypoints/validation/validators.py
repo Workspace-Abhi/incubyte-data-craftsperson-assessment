@@ -35,6 +35,16 @@ def parse_and_validate_date(val: Any, format_hint: Optional[str] = None) -> Tupl
     if s is None:
         return None, None
 
+    # Normalize ISO timestamp / time portion if present (e.g. "2022-05-11 00:00:00" -> "2022-05-11")
+    if " " in s:
+        parts = s.split(" ")
+        if len(parts) == 2 and ":" in parts[1]:
+            s = parts[0]
+    elif "T" in s:
+        parts = s.split("T")
+        if len(parts) == 2 and ":" in parts[1]:
+            s = parts[0]
+
     # 1. Source-specific hint parsing
     if format_hint and format_hint.upper() in ("USA", "MDDYYYY", "MMDDYYYY"):
         if s.isdigit():
