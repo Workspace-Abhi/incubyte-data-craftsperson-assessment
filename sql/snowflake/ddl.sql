@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS RAW_MEMBER_LANDING (
     COUNTRY              VARCHAR(50),
     DOB                  VARCHAR(50),
     IS_ACTIVE            VARCHAR(10),
+    POST_CODE            VARCHAR(50),
     SOURCE_FILE_NAME     VARCHAR(255),
     INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS STG_MEMBER_PROFILE (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50),
+    POST_CODE            NUMBER(5, 0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1)       DEFAULT 'A',
     AGE                  INTEGER,         -- Derived: Exact calendar age
@@ -155,7 +157,34 @@ CREATE TABLE IF NOT EXISTS TABLE_AU (
 CLUSTER BY (MEMBER_ID);
 
 -- ----------------------------------------------------------------------------
--- 4. SEMI-STRUCTURED REDEMPTION TABLES
+-- 4. REFERENCE TABLES: Country Table Mapping
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS REF_COUNTRY_MAP (
+    COUNTRY_CODE         VARCHAR(10)      PRIMARY KEY,
+    TARGET_TABLE         VARCHAR(50)      NOT NULL
+);
+
+-- Seed Country Mappings (IND/INDIA -> TABLE_INDIA, USA -> TABLE_USA, etc.)
+MERGE INTO REF_COUNTRY_MAP target
+USING (
+    SELECT 'IND' AS code, 'TABLE_INDIA' AS tbl UNION ALL
+    SELECT 'INDIA', 'TABLE_INDIA' UNION ALL
+    SELECT 'USA', 'TABLE_USA' UNION ALL
+    SELECT 'CAN', 'TABLE_CAN' UNION ALL
+    SELECT 'CANADA', 'TABLE_CAN' UNION ALL
+    SELECT 'PHIL', 'TABLE_PHIL' UNION ALL
+    SELECT 'PH', 'TABLE_PHIL' UNION ALL
+    SELECT 'AU', 'TABLE_AU' UNION ALL
+    SELECT 'AUS', 'TABLE_AU'
+) src
+ON target.COUNTRY_CODE = src.code
+WHEN MATCHED THEN
+    UPDATE SET target.TARGET_TABLE = src.tbl
+WHEN NOT MATCHED THEN
+    INSERT (COUNTRY_CODE, TARGET_TABLE) VALUES (src.code, src.tbl);
+
+-- ----------------------------------------------------------------------------
+-- 5. SEMI-STRUCTURED REDEMPTION TABLES
 -- ----------------------------------------------------------------------------
 
 -- Landing table for raw JSON documents
