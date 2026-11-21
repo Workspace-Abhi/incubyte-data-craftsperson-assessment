@@ -1,6 +1,7 @@
 """Excel reader supporting original company XLSX files (IND.xlsx, USA.xlsx, AUS.xlsx)."""
 from typing import List, Optional, Union
 from pathlib import Path
+from datetime import datetime, date
 import openpyxl
 
 try:
@@ -45,7 +46,10 @@ def read_xlsx_file(
         norm_row = {}
         for h, v in zip(headers, row_values):
             if h:
-                norm_row[h] = str(v).strip() if v is not None else None
+                if isinstance(v, (datetime, date)):
+                    norm_row[h] = v.strftime("%Y-%m-%d")
+                else:
+                    norm_row[h] = str(v).strip() if v is not None else None
 
         raw_id = norm_row.get("id") or norm_row.get("unique_id") or norm_row.get("member_id")
         member_name = norm_row.get("name") or norm_row.get("member_name")

@@ -46,38 +46,41 @@ The smoke test executes the following automated workflow:
 
 ## 3. Smoke Test Results Verification Matrix
 
+> [!NOTE]
+> **Execution Status**: The 33 test scenarios below define the target behavioral contracts for the Snowflake pipeline. All behavioral specifications and logic parity are verified locally via the Python / DuckDB automated test suites (`tests/`) and static SQL contract tests (`tests/sql_contract/`). Direct execution against a live Snowflake warehouse is ready to be run by the database administrator via `sql/snowflake/tests/smoke_test.sql` using active warehouse connection credentials. In accordance with honest engineering reporting, live warehouse execution rows are marked `NOT RUN` pending live warehouse access.
+
 | Scenario Name | Category | Expected Result | Verified Status |
 | :--- | :--- | :---: | :---: |
-| Member moving country (old country delete) | Country Migration | 0 in `TABLE_USA` | **PASS** |
-| Newer extract date move: inserted into new TABLE_INDIA | Country Migration | 1 in `TABLE_INDIA` | **PASS** |
-| Composite key: Same ID in IND_SYS and USA_SYS both survive | Multi-Source Key | 2 members | **PASS** |
-| Rename collision: older name quarantined in DLQ | Intra-Batch Collision | 1 DLQ row | **PASS** |
-| Rename collision: newer name kept in target table | Intra-Batch Collision | Kept in `TABLE_USA` | **PASS** |
-| Empty-string tier code: treated as null, not quarantined | Data Cleansing | 1 valid member | **PASS** |
-| Unmapped country: quarantined in DLQ at staging | Data Quality Gate | 1 DLQ row | **PASS** |
-| Null country: quarantined in DLQ at staging | Data Quality Gate | 1 DLQ row | **PASS** |
-| Bad redemption feed_date: quarantined into DLQ | Redemptions Gate | 1 DLQ row | **PASS** |
-| Ambiguous member_id redemption: quarantined into DLQ | Redemptions Ambiguity | 1 DLQ row | **PASS** |
-| DLQ reject preservation: two rows with missing member_id both quarantined | DLQ Uniqueness | 2 DLQ rows | **PASS** |
-| DLQ reject preservation: same ID in two source systems both bad both quarantined | DLQ Uniqueness | 2 DLQ rows | **PASS** |
-| DLQ reject preservation: same bad row in two batches yields 2 DLQ rows | DLQ Uniqueness | 2 DLQ rows | **PASS** |
-| Rename across two batches: no DLQ row created | Cross-Batch Rename | 0 DLQ rows | **PASS** |
-| Rename across two batches: newest name wins in target table | Cross-Batch Rename | Newest name retained | **PASS** |
-| Ambiguity round trip: redemptions return to mart when ambiguity disappears | Redemptions Lifecycle | Miles in Mart | **PASS** |
-| Mart before rerun: MEMBER_LOYALTY_360 total member rows | Analytical Mart | 12 members | **PASS** |
-| Mart before rerun: MOVE_101 country updated to IND | Analytical Mart | `IND` | **PASS** |
-| Mart before rerun: MOVE_101 COMPLETED miles summed correctly | Miles Calculation | 5,000 miles | **PASS** |
-| Mart before rerun: MOVE_101 PENDING miles tracked separately | Miles Calculation | 2,000 miles | **PASS** |
-| Rerun delta: STG_MEMBER_PROFILE row count unchanged | Idempotent Rerun | Delta = 0 | **PASS** |
-| Rerun delta: RAW_DLQ_QUARANTINE row count unchanged | Idempotent Rerun | Delta = 0 | **PASS** |
-| Rerun delta: STG_REDEMPTIONS_FLATTENED row count unchanged | Idempotent Rerun | Delta = 0 | **PASS** |
-| Rerun delta: MEMBER_LOYALTY_360 row count unchanged | Idempotent Rerun | Delta = 0 | **PASS** |
-| Invalid DOB: quarantined into DLQ | Data Quality Gate | 1 DLQ row | **PASS** |
-| Non-numeric miles: quarantined into DLQ without abort | Data Quality Gate | 1 DLQ row | **PASS** |
-| POST_CODE present in country target table | Schema Completeness | Preserved | **PASS** |
-| Out-of-order older record audited in DLQ as superseded | Recency Audit | 1 DLQ row | **PASS** |
-| In-flight landing record processed successfully on subsequent run | Batch Claiming | Processed | **PASS** |
-| Interrupted batch: unprocessed landing record with old batch ID is re-claimed and processed | Fault Tolerance | Processed | **PASS** |
-| Same-day correction with equal line numbers: deleted from old TABLE_USA | Tie-Break Accuracy | Deleted | **PASS** |
-| Same-day correction with equal line numbers: inserted into new TABLE_INDIA | Tie-Break Accuracy | Inserted | **PASS** |
-| Same-country tie with lower line number: existing higher line number record preserved | Tie-Break Accuracy | Preserved | **PASS** |
+| Member moving country (old country delete) | Country Migration | 0 in `TABLE_USA` | NOT RUN |
+| Newer extract date move: inserted into new TABLE_INDIA | Country Migration | 1 in `TABLE_INDIA` | NOT RUN |
+| Composite key: Same ID in IND_SYS and USA_SYS both survive | Multi-Source Key | 2 members | NOT RUN |
+| Rename collision: older name quarantined in DLQ | Intra-Batch Collision | 1 DLQ row | NOT RUN |
+| Rename collision: newer name kept in target table | Intra-Batch Collision | Kept in `TABLE_USA` | NOT RUN |
+| Empty-string tier code: treated as null, not quarantined | Data Cleansing | 1 valid member | NOT RUN |
+| Unmapped country: quarantined in DLQ at staging | Data Quality Gate | 1 DLQ row | NOT RUN |
+| Null country: quarantined in DLQ at staging | Data Quality Gate | 1 DLQ row | NOT RUN |
+| Bad redemption feed_date: quarantined into DLQ | Redemptions Gate | 1 DLQ row | NOT RUN |
+| Ambiguous member_id redemption: quarantined into DLQ | Redemptions Ambiguity | 1 DLQ row | NOT RUN |
+| DLQ reject preservation: two rows with missing member_id both quarantined | DLQ Uniqueness | 2 DLQ rows | NOT RUN |
+| DLQ reject preservation: same ID in two source systems both bad both quarantined | DLQ Uniqueness | 2 DLQ rows | NOT RUN |
+| DLQ reject preservation: same bad row in two batches yields 2 DLQ rows | DLQ Uniqueness | 2 DLQ rows | NOT RUN |
+| Rename across two batches: no DLQ row created | Cross-Batch Rename | 0 DLQ rows | NOT RUN |
+| Rename across two batches: newest name wins in target table | Cross-Batch Rename | Newest name retained | NOT RUN |
+| Ambiguity round trip: redemptions return to mart when ambiguity disappears | Redemptions Lifecycle | Miles in Mart | NOT RUN |
+| Mart before rerun: MEMBER_LOYALTY_360 total member rows | Analytical Mart | 12 members | NOT RUN |
+| Mart before rerun: MOVE_101 country updated to IND | Analytical Mart | `IND` | NOT RUN |
+| Mart before rerun: MOVE_101 COMPLETED miles summed correctly | Miles Calculation | 5,000 miles | NOT RUN |
+| Mart before rerun: MOVE_101 PENDING miles tracked separately | Miles Calculation | 2,000 miles | NOT RUN |
+| Rerun delta: STG_MEMBER_PROFILE row count unchanged | Idempotent Rerun | Delta = 0 | NOT RUN |
+| Rerun delta: RAW_DLQ_QUARANTINE row count unchanged | Idempotent Rerun | Delta = 0 | NOT RUN |
+| Rerun delta: STG_REDEMPTIONS_FLATTENED row count unchanged | Idempotent Rerun | Delta = 0 | NOT RUN |
+| Rerun delta: MEMBER_LOYALTY_360 row count unchanged | Idempotent Rerun | Delta = 0 | NOT RUN |
+| Invalid DOB: quarantined into DLQ | Data Quality Gate | 1 DLQ row | NOT RUN |
+| Non-numeric miles: quarantined into DLQ without abort | Data Quality Gate | 1 DLQ row | NOT RUN |
+| POST_CODE present in country target table | Schema Completeness | Preserved | NOT RUN |
+| Out-of-order older record audited in DLQ as superseded | Recency Audit | 1 DLQ row | NOT RUN |
+| In-flight landing record processed successfully on subsequent run | Batch Claiming | Processed | NOT RUN |
+| Interrupted batch: unprocessed landing record with old batch ID is re-claimed and processed | Fault Tolerance | Processed | NOT RUN |
+| Same-day correction with equal line numbers: deleted from old TABLE_USA | Tie-Break Accuracy | Deleted | NOT RUN |
+| Same-day correction with equal line numbers: inserted into new TABLE_INDIA | Tie-Break Accuracy | Inserted | NOT RUN |
+| Same-country tie with lower line number: existing higher line number record preserved | Tie-Break Accuracy | Preserved | NOT RUN |
