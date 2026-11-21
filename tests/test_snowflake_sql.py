@@ -20,6 +20,10 @@ def test_snowflake_ddl_ref_country_map():
     assert "'TABLE_PHIL'" in content
     assert "'TABLE_AU'" in content
 
+    # Task 1: SOURCE_SYSTEM in DDL and composite primary keys
+    assert "SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE'" in content
+    assert "PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)" in content
+
 
 def test_snowflake_transformations_scripting_and_merge():
     sql_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "transformations.sql"
@@ -29,6 +33,13 @@ def test_snowflake_transformations_scripting_and_merge():
     assert "EXECUTE IMMEDIATE" in content
     assert "IDENTIFIER(:1)" in content
     assert "CURSOR FOR SELECT DISTINCT TARGET_TABLE FROM REF_COUNTRY_MAP" in content
+
+    # Task 1: SOURCE_SYSTEM composite dedup and merge/delete join keys
+    assert "PARTITION BY SOURCE_SYSTEM, MEMBER_ID" in content
+    assert "target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID" in content
+    assert "d.SOURCE_SYSTEM = target.SOURCE_SYSTEM" in content
+    assert "Ambiguous member_id across source systems" in content
+    assert "m.SOURCE_SYSTEM" in content
 
     # Join-based anti-check DELETE
     assert "WHERE EXISTS" in content

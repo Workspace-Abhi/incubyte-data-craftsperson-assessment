@@ -51,6 +51,7 @@ WHERE RECORD_TYPE = 'D'
 -- STEP 2: Populate STG_MEMBER_PROFILE with Exact Calendar Age & Stale_Member
 -- ----------------------------------------------------------------------------
 INSERT INTO STG_MEMBER_PROFILE (
+    SOURCE_SYSTEM,
     MEMBER_ID,
     MEMBER_NAME,
     ENROLLMENT_DATE,
@@ -67,6 +68,7 @@ INSERT INTO STG_MEMBER_PROFILE (
     INGESTED_AT
 )
 SELECT
+    COALESCE(TRIM(SOURCE_SYSTEM), 'FLAT_FILE') AS SOURCE_SYSTEM,
     TRIM(MEMBER_ID) AS MEMBER_ID,
     TRIM(MEMBER_NAME) AS MEMBER_NAME,
     TRY_TO_DATE(TRIM(ENROLLMENT_DATE), 'YYYYMMDD') AS ENROLLMENT_DATE,
@@ -117,6 +119,7 @@ WHERE RECORD_TYPE = 'D'
 CREATE OR REPLACE TEMPORARY TABLE DEDUPED_LATEST_MEMBERS AS
 WITH RankedMembers AS (
     SELECT
+        SOURCE_SYSTEM,
         MEMBER_ID,
         MEMBER_NAME,
         ENROLLMENT_DATE,
@@ -131,7 +134,7 @@ WITH RankedMembers AS (
         STALE_MEMBER,
         INGESTED_AT,
         ROW_NUMBER() OVER (
-            PARTITION BY MEMBER_ID 
+            PARTITION BY SOURCE_SYSTEM, MEMBER_ID 
             ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC
         ) AS RN
     FROM STG_MEMBER_PROFILE
@@ -176,7 +179,7 @@ BEGIN
                 JOIN REF_COUNTRY_MAP m ON UPPER(TRIM(d.COUNTRY)) = m.COUNTRY_CODE
                 WHERE m.TARGET_TABLE = :1
             ) src
-            ON target.MEMBER_ID = src.MEMBER_ID
+            ON target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID
             WHEN MATCHED THEN
                 UPDATE SET
                     target.MEMBER_NAME = src.MEMBER_NAME,
@@ -192,8 +195,8 @@ BEGIN
                     target.STALE_MEMBER = src.STALE_MEMBER,
                     target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
             WHEN NOT MATCHED THEN
-                INSERT (MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, AGE, STALE_MEMBER, LAST_UPDATED_AT)
-                VALUES (src.MEMBER_ID, src.MEMBER_NAME, src.ENROLLMENT_DATE, src.LAST_FLIGHT_DATE, src.TIER_CODE, src.AGENT_NAME, src.STATE, src.COUNTRY, src.DOB, src.IS_ACTIVE, src.AGE, src.STALE_MEMBER, CURRENT_TIMESTAMP())'
+                INSERT (SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, AGE, STALE_MEMBER, LAST_UPDATED_AT)
+                VALUES (src.SOURCE_SYSTEM, src.MEMBER_ID, src.MEMBER_NAME, src.ENROLLMENT_DATE, src.LAST_FLIGHT_DATE, src.TIER_CODE, src.AGENT_NAME, src.STATE, src.COUNTRY, src.DOB, src.IS_ACTIVE, src.AGE, src.STALE_MEMBER, CURRENT_TIMESTAMP())'
             USING (v_tbl);
 
         -- B. Join-based anti-check DELETE: Removes members who moved to a DIFFERENT mapped country.
@@ -204,7 +207,8 @@ BEGIN
                 SELECT 1
                 FROM DEDUPED_LATEST_MEMBERS d
                 JOIN REF_COUNTRY_MAP m ON UPPER(TRIM(d.COUNTRY)) = m.COUNTRY_CODE
-                WHERE d.MEMBER_ID = target.MEMBER_ID
+                WHERE d.SOURCE_SYSTEM = target.SOURCE_SYSTEM
+                  AND d.MEMBER_ID = target.MEMBER_ID
                   AND m.TARGET_TABLE <> :1
             )'
             USING (v_tbl);
@@ -289,6 +293,32 @@ WHEN NOT MATCHED THEN
 -- ----------------------------------------------------------------------------
 -- STEP 5: Loyalty 360 Analytical Mart (Sums Only COMPLETED Miles)
 -- ----------------------------------------------------------------------------
+
+-- 1. Quarantine ambiguous redemptions whose MEMBER_ID spans multiple SOURCE_SYSTEMs
+INSERT INTO RAW_DLQ_QUARANTINE (RECORD_ID, RAW_RECORD, ERROR_REASON, SOURCE_FEED, QUARANTINED_AT)
+SELECT
+    r.TXN_ID,
+    CONCAT_WS('|', r.TXN_ID, r.MEMBER_ID, r.FEED_DATE, r.TXN_DATE, r.PARTNER, r.MILES_REDEEMED, r.STATUS),
+    'Ambiguous member_id across source systems',
+    'STG_REDEMPTIONS_FLATTENED',
+    CURRENT_TIMESTAMP()
+FROM STG_REDEMPTIONS_FLATTENED r
+WHERE r.MEMBER_ID IN (
+    SELECT MEMBER_ID
+    FROM DEDUPED_LATEST_MEMBERS
+    GROUP BY MEMBER_ID
+    HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
+);
+
+DELETE FROM STG_REDEMPTIONS_FLATTENED
+WHERE MEMBER_ID IN (
+    SELECT MEMBER_ID
+    FROM DEDUPED_LATEST_MEMBERS
+    GROUP BY MEMBER_ID
+    HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
+);
+
+-- 2. Build or Refresh MEMBER_LOYALTY_360 Mart
 CREATE OR REPLACE TABLE MEMBER_LOYALTY_360 AS
 WITH RedemptionSummary AS (
     SELECT
@@ -303,6 +333,7 @@ WITH RedemptionSummary AS (
     GROUP BY MEMBER_ID
 )
 SELECT
+    m.SOURCE_SYSTEM,
     m.MEMBER_ID,
     m.MEMBER_NAME,
     m.COUNTRY,
