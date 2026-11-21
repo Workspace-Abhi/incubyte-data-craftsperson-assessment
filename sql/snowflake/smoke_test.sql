@@ -78,9 +78,22 @@ INSERT INTO RAW_MEMBER_LANDING (
 
 -- 11. Member RESOLVE_101 ambiguous across two sources in Batch 1 (will be resolved in Batch 2)
 ('D', 'IND_SYS', 'RESOLVE_101', 'Rahul Ind', '20200101', '20210101', 'GLD', 'AgentL', 'MH', 'IND', '01011990', 'A', '40001', 'ind_1.dat'),
-('D', 'USA_SYS', 'RESOLVE_101', 'Sam Usa', '20200101', '20210101', 'GLD', 'AgentL', 'CA', 'USA', '01011990', 'A', '90210', 'usa_1.dat');
+('D', 'USA_SYS', 'RESOLVE_101', 'Sam Usa', '20200101', '20210101', 'GLD', 'AgentL', 'CA', 'USA', '01011990', 'A', '90210', 'usa_1.dat'),
+
+-- 12. Invalid DOB (unparseable calendar date, should be quarantined to DLQ)
+('D', 'FLAT_FILE', 'BAD_DOB_1', 'Bad DOB User', '20220101', '20230101', 'GLD', 'AgentM', 'CA', 'USA', '99999999', 'A', '90210', 'batch_1.dat');
 
 -- Redemption fixtures
+-- Non-numeric miles_redeemed fixture: 'abc' quarantined without aborting
+INSERT INTO RAW_REDEMPTIONS_LANDING (FEED_PAYLOAD, FEED_DATE)
+SELECT PARSE_JSON('{
+    "member_id": "MOVE_101",
+    "feed_date": "20240115",
+    "redemptions": [
+        {"txn_id": "TXN_NON_NUM_1", "txn_date": "20240110", "partner": "SkyPoints", "miles_redeemed": "abc", "status": "COMPLETED"}
+    ]
+}'), '20240115';
+
 -- Replay fixture: identical TXN_REPLAY_1 sent twice
 INSERT INTO RAW_REDEMPTIONS_LANDING (FEED_PAYLOAD, FEED_DATE)
 SELECT PARSE_JSON('{
@@ -418,6 +431,41 @@ WITH AssertionResults AS (
         TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) AS actual
     FROM MEMBER_LOYALTY_360
     WHERE MEMBER_ID = 'RESOLVE_101'
+
+    UNION ALL
+
+    -- Scenario 14: Invalid DOB quarantined into DLQ
+    SELECT
+        25 AS test_id,
+        'Invalid DOB: quarantined into DLQ' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'BAD_DOB_1'
+      AND ERROR_REASON = 'Invalid DOB: unparseable calendar date'
+
+    UNION ALL
+
+    -- Scenario 15: Non-numeric miles quarantined into DLQ without abort
+    SELECT
+        26 AS test_id,
+        'Non-numeric miles: quarantined into DLQ without abort' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'TXN_NON_NUM_1'
+      AND ERROR_REASON = 'Invalid miles_redeemed data type: non-numeric'
+
+    UNION ALL
+
+    -- Scenario 16: POST_CODE present in country target table
+    SELECT
+        27 AS test_id,
+        'POST_CODE present in country target table' AS scenario,
+        '40001' AS expected,
+        TO_VARCHAR(COALESCE(MAX(POST_CODE), 0)) AS actual
+    FROM TABLE_INDIA
+    WHERE MEMBER_ID = 'MOVE_101'
 )
 SELECT
     scenario,

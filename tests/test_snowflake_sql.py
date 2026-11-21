@@ -74,6 +74,11 @@ def test_snowflake_smoke_test_coverage():
     assert "Rename across two batches: newest name wins in target table" in content
     assert "Ambiguity round trip: redemptions return to mart when ambiguity disappears" in content
 
+    # SQL correctness scenarios (P5)
+    assert "Invalid DOB: quarantined into DLQ" in content
+    assert "Non-numeric miles: quarantined into DLQ without abort" in content
+    assert "POST_CODE present in country target table" in content
+
     # Final assertion status reporting
     assert "scenario," in content
     assert "expected," in content
@@ -132,13 +137,18 @@ def test_snowflake_ddl_ref_country_map():
     assert "CREATE TABLE IF NOT EXISTS RAW_DLQ_QUARANTINE" in content
     assert "IS_AMBIGUOUS         BOOLEAN          DEFAULT FALSE" in content
 
-    # Task 4: MEMBERS_ALL unified country view
+    # P5: Removed primary key from staging and added POST_CODE to country tables
+    assert "CONSTRAINT PK_STG_MEMBER" not in content
+    assert "POST_CODE            NUMBER(5,0)" in content
+
+    # Task 4 & P5: MEMBERS_ALL unified country view with explicit column lists
     assert "CREATE OR REPLACE VIEW MEMBERS_ALL AS" in content
-    assert "SELECT * FROM TABLE_INDIA" in content
-    assert "SELECT * FROM TABLE_USA" in content
-    assert "SELECT * FROM TABLE_CAN" in content
-    assert "SELECT * FROM TABLE_PHIL" in content
-    assert "SELECT * FROM TABLE_AU" in content
+    assert "FROM TABLE_INDIA" in content
+    assert "FROM TABLE_USA" in content
+    assert "FROM TABLE_CAN" in content
+    assert "FROM TABLE_PHIL" in content
+    assert "FROM TABLE_AU" in content
+    assert "SELECT *" not in content.split("MEMBERS_ALL AS")[1].split("SEMI-STRUCTURED")[0]
 
 
 def test_snowflake_transformations_and_merge():
@@ -168,13 +178,14 @@ def test_snowflake_transformations_and_merge():
     assert "'Unmapped country'" in content
     assert "LEFT JOIN REF_COUNTRY_MAP" in content
 
-    # Parity with Python validator & string sanitization
+    # Parity with Python validator & string sanitization (P5 DOB quarantine)
     assert "NULLIF(TRIM(" in content
     assert "'NULL', 'NONE'" in content
     assert "Invalid Post_Code: must be numeric" in content
     assert "Invalid domain value: Tier_Code not in (PLT, GLD, SLV)" in content
     assert "Invalid domain value: Is_Active must be in (A, I)" in content
     assert "Invalid Last_Flight_Date: unparseable calendar date" in content
+    assert "Invalid DOB: unparseable calendar date" in content
 
     # Key collisions resolution before dedupe & deterministic tie-breaking (P4 recency key)
     assert "Key collision: superseded by newer record" in content
@@ -185,11 +196,16 @@ def test_snowflake_transformations_and_merge():
     assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in content
     assert "DELETE FROM STG_MEMBER_PROFILE" not in content
 
-    # Redemptions DLQ & Idempotent MERGE
+    # P5: Explicit column list in deduplication (no SELECT * EXCLUDE)
+    assert "SELECT * EXCLUDE (RN)" not in content
+
+    # Redemptions DLQ & Idempotent MERGE (P5 TRY_TO_NUMBER)
     assert "STG_REDEMPTIONS_FLATTENED" in content
     assert "Invalid feed_date in redemption feed" in content
     assert "CURRENT_DATE()" not in content.split("STEP 4")[1]
     assert "Invalid miles_redeemed: value cannot be negative" in content
+    assert "TRY_TO_NUMBER(r.value:miles_redeemed::STRING)" in content
+    assert "r.value:miles_redeemed::INTEGER" not in content
     assert "MERGE INTO STG_REDEMPTIONS_FLATTENED" in content
     assert "target.TXN_ID = src.TXN_ID" in content
 
@@ -223,5 +239,7 @@ def test_generated_country_merges_matches_script_output():
     assert "MERGE INTO TABLE_PHIL target" in actual
     assert "MERGE INTO TABLE_AU target" in actual
     assert "target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID" in actual
+    assert "target.POST_CODE = src.POST_CODE" in actual
+    assert "SELECT *" not in actual
     assert "d.SOURCE_SYSTEM = target.SOURCE_SYSTEM" in actual
     assert "d.COUNTRY <> 'IND'" in actual

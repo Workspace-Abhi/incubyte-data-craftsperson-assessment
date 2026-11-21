@@ -9,7 +9,23 @@
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_AU target
 USING (
-    SELECT *
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
     FROM DEDUPED_LATEST_MEMBERS
     WHERE COUNTRY = 'AU'
 ) src
@@ -23,6 +39,7 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
@@ -41,6 +58,7 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
@@ -59,6 +77,7 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,
@@ -83,7 +102,23 @@ WHERE EXISTS (
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_CAN target
 USING (
-    SELECT *
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
     FROM DEDUPED_LATEST_MEMBERS
     WHERE COUNTRY = 'CAN'
 ) src
@@ -97,6 +132,7 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
@@ -115,6 +151,7 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
@@ -133,6 +170,7 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,
@@ -157,7 +195,23 @@ WHERE EXISTS (
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_INDIA target
 USING (
-    SELECT *
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
     FROM DEDUPED_LATEST_MEMBERS
     WHERE COUNTRY = 'IND'
 ) src
@@ -171,6 +225,7 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
@@ -189,6 +244,7 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
@@ -207,6 +263,7 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,
@@ -231,7 +288,23 @@ WHERE EXISTS (
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_PHIL target
 USING (
-    SELECT *
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
     FROM DEDUPED_LATEST_MEMBERS
     WHERE COUNTRY = 'PHIL'
 ) src
@@ -245,6 +318,7 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
@@ -263,6 +337,7 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
@@ -281,6 +356,7 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,
@@ -305,7 +381,23 @@ WHERE EXISTS (
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_USA target
 USING (
-    SELECT *
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
     FROM DEDUPED_LATEST_MEMBERS
     WHERE COUNTRY = 'USA'
 ) src
@@ -319,6 +411,7 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
@@ -337,6 +430,7 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
@@ -355,6 +449,7 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,

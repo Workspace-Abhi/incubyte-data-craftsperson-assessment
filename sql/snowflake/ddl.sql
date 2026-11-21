@@ -71,14 +71,18 @@ CREATE TABLE IF NOT EXISTS STG_MEMBER_PROFILE (
     SOURCE_FILE_NAME     VARCHAR(255),
     EXTRACT_DATE         DATE,
     LINE_NO              NUMBER,
-    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
-    CONSTRAINT PK_STG_MEMBER PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID) RELY
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+    -- NOTE: Primary key constraints are removed from STG_MEMBER_PROFILE because staging
+    -- legitimately holds multiple records per key during ingestion prior to deduplication.
+    -- Snowflake does not enforce PRIMARY KEY constraints on country tables or marts.
 )
 CLUSTER BY (COUNTRY, ENROLLMENT_DATE);
 
 -- ----------------------------------------------------------------------------
 -- 3. COUNTRY-SPECIFIC TARGET TABLES
 -- Dedicated physical country tables clustered on MEMBER_ID
+-- NOTE: Primary key declarations are informational metadata; Snowflake does not
+-- enforce primary key uniqueness. Pipeline deduplication and MERGE logic enforce uniqueness.
 -- ----------------------------------------------------------------------------
 
 -- Table: India
@@ -92,6 +96,7 @@ CREATE TABLE IF NOT EXISTS TABLE_INDIA (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'IND',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
@@ -114,6 +119,7 @@ CREATE TABLE IF NOT EXISTS TABLE_USA (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'USA',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
@@ -136,6 +142,7 @@ CREATE TABLE IF NOT EXISTS TABLE_CAN (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'CAN',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
@@ -158,6 +165,7 @@ CREATE TABLE IF NOT EXISTS TABLE_PHIL (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'PHIL',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
@@ -180,6 +188,7 @@ CREATE TABLE IF NOT EXISTS TABLE_AU (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'AU',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
@@ -221,17 +230,18 @@ WHEN NOT MATCHED THEN
 
 -- ----------------------------------------------------------------------------
 -- 4B. UNIFIED COUNTRY MEMBERS VIEW
+-- Explicit column list projected across all country tables
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW MEMBERS_ALL AS
-SELECT * FROM TABLE_INDIA
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_INDIA
 UNION ALL
-SELECT * FROM TABLE_USA
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_USA
 UNION ALL
-SELECT * FROM TABLE_CAN
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_CAN
 UNION ALL
-SELECT * FROM TABLE_PHIL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_PHIL
 UNION ALL
-SELECT * FROM TABLE_AU;
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_AU;
 
 -- ----------------------------------------------------------------------------
 -- 5. SEMI-STRUCTURED REDEMPTION TABLES

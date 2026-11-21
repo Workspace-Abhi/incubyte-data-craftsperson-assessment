@@ -63,6 +63,7 @@ SELECT
         WHEN s.ENROLLMENT_DATE IS NULL THEN 'Missing mandatory Enrollment_Date'
         WHEN TRY_TO_DATE(s.ENROLLMENT_DATE, 'YYYYMMDD') IS NULL THEN 'Invalid calendar Enrollment_Date'
         WHEN s.LAST_FLIGHT_DATE IS NOT NULL AND TRY_TO_DATE(s.LAST_FLIGHT_DATE, 'YYYYMMDD') IS NULL THEN 'Invalid Last_Flight_Date: unparseable calendar date'
+        WHEN s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL THEN 'Invalid DOB: unparseable calendar date'
         WHEN LENGTH(s.MEMBER_ID) > 18 THEN 'Member_Id exceeds 18 characters'
         WHEN s.COUNTRY IS NULL THEN 'Unmapped country: Country is required and cannot be empty'
         WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
@@ -87,6 +88,7 @@ WHERE s.RECORD_TYPE = 'D'
       OR s.ENROLLMENT_DATE IS NULL
       OR TRY_TO_DATE(s.ENROLLMENT_DATE, 'YYYYMMDD') IS NULL
       OR (s.LAST_FLIGHT_DATE IS NOT NULL AND TRY_TO_DATE(s.LAST_FLIGHT_DATE, 'YYYYMMDD') IS NULL)
+      OR (s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL)
       OR LENGTH(s.MEMBER_ID) > 18
       OR s.COUNTRY IS NULL
       OR LENGTH(s.COUNTRY) > 5
@@ -189,6 +191,7 @@ WHERE s.RECORD_TYPE = 'D'
   AND s.MEMBER_NAME IS NOT NULL
   AND TRY_TO_DATE(s.ENROLLMENT_DATE, 'YYYYMMDD') IS NOT NULL
   AND (s.LAST_FLIGHT_DATE IS NULL OR TRY_TO_DATE(s.LAST_FLIGHT_DATE, 'YYYYMMDD') IS NOT NULL)
+  AND (s.DOB IS NULL OR TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NOT NULL)
   AND LENGTH(s.MEMBER_ID) <= 18
   AND s.COUNTRY IS NOT NULL
   AND LENGTH(s.COUNTRY) <= 5
@@ -275,6 +278,7 @@ WITH RankedMembers AS (
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
@@ -290,7 +294,26 @@ WITH RankedMembers AS (
         ) AS RN
     FROM STG_MEMBER_PROFILE
 )
-SELECT * EXCLUDE (RN)
+SELECT
+    SOURCE_SYSTEM,
+    MEMBER_ID,
+    MEMBER_NAME,
+    ENROLLMENT_DATE,
+    LAST_FLIGHT_DATE,
+    TIER_CODE,
+    AGENT_NAME,
+    STATE,
+    COUNTRY,
+    POST_CODE,
+    DOB,
+    IS_ACTIVE,
+    AGE,
+    STALE_MEMBER,
+    SOURCE_FILE_NAME,
+    EXTRACT_DATE,
+    LINE_NO,
+    INGESTED_AT,
+    STG_ROW_ID
 FROM RankedMembers
 WHERE RN = 1;
 
@@ -339,7 +362,7 @@ SELECT
         WHEN TRY_TO_DATE(r.value:txn_date::STRING, 'YYYYMMDD') IS NULL THEN 'Invalid txn_date: unparseable calendar date'
         WHEN r.value:miles_redeemed IS NULL THEN 'Missing mandatory miles_redeemed'
         WHEN TRY_TO_NUMBER(r.value:miles_redeemed::STRING) IS NULL THEN 'Invalid miles_redeemed data type: non-numeric'
-        WHEN r.value:miles_redeemed::INTEGER < 0 THEN 'Invalid miles_redeemed: value cannot be negative'
+        WHEN TRY_TO_NUMBER(r.value:miles_redeemed::STRING) < 0 THEN 'Invalid miles_redeemed: value cannot be negative'
         WHEN r.value:partner IS NULL OR NULLIF(TRIM(r.value:partner::STRING), '') IS NULL THEN 'Missing mandatory partner airline name'
         WHEN r.value:status IS NULL OR NULLIF(TRIM(r.value:status::STRING), '') IS NULL THEN 'Missing mandatory transaction status'
         ELSE 'Redemption validation failure'
@@ -362,7 +385,7 @@ WHERE raw.PROCESSED_AT IS NULL
       OR TRY_TO_DATE(r.value:txn_date::STRING, 'YYYYMMDD') IS NULL
       OR r.value:miles_redeemed IS NULL
       OR TRY_TO_NUMBER(r.value:miles_redeemed::STRING) IS NULL
-      OR r.value:miles_redeemed::INTEGER < 0
+      OR TRY_TO_NUMBER(r.value:miles_redeemed::STRING) < 0
       OR r.value:partner IS NULL OR NULLIF(TRIM(r.value:partner::STRING), '') IS NULL
       OR r.value:status IS NULL OR NULLIF(TRIM(r.value:status::STRING), '') IS NULL
   );
@@ -377,7 +400,7 @@ USING (
         TRY_TO_DATE(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), 'YYYYMMDD') AS FEED_DATE,
         TRY_TO_DATE(TRIM(r.value:txn_date::STRING), 'YYYYMMDD') AS TXN_DATE,
         TRIM(r.value:partner::STRING) AS PARTNER,
-        r.value:miles_redeemed::INTEGER AS MILES_REDEEMED,
+        TRY_TO_NUMBER(r.value:miles_redeemed::STRING) AS MILES_REDEEMED,
         UPPER(TRIM(r.value:status::STRING)) AS STATUS,
         $run_batch_id AS BATCH_ID
     FROM RAW_REDEMPTIONS_LANDING raw,
@@ -388,7 +411,7 @@ USING (
       AND raw.FEED_PAYLOAD:member_id IS NOT NULL AND NULLIF(TRIM(raw.FEED_PAYLOAD:member_id::STRING), '') IS NOT NULL
       AND r.value:txn_id IS NOT NULL AND NULLIF(TRIM(r.value:txn_id::STRING), '') IS NOT NULL
       AND r.value:txn_date IS NOT NULL AND TRY_TO_DATE(TRIM(r.value:txn_date::STRING), 'YYYYMMDD') IS NOT NULL
-      AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) IS NOT NULL AND r.value:miles_redeemed::INTEGER >= 0
+      AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) >= 0
       AND r.value:partner IS NOT NULL AND NULLIF(TRIM(r.value:partner::STRING), '') IS NOT NULL
       AND r.value:status IS NOT NULL AND NULLIF(TRIM(r.value:status::STRING), '') IS NOT NULL
 ) src
