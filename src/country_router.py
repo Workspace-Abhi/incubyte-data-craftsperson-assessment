@@ -4,6 +4,38 @@ from typing import Dict, List, Any, Optional
 import duckdb
 
 
+CANONICAL_COUNTRY_MAP = {
+    "IND": "IND",
+    "INDIA": "IND",
+    "USA": "USA",
+    "CAN": "CAN",
+    "CANADA": "CAN",
+    "PHIL": "PHIL",
+    "PH": "PHIL",
+    "AU": "AU",
+    "AUS": "AU",
+}
+
+CANONICAL_TABLE_MAP = {
+    "IND": "table_india",
+    "USA": "table_usa",
+    "CAN": "table_canada",
+    "PHIL": "table_philippines",
+    "AU": "table_australia",
+}
+
+
+def normalize_country(country: Optional[str]) -> Optional[str]:
+    """Map country aliases to canonical codes (IND, USA, CAN, PHIL, AU).
+
+    Returns None if country is missing or not in the canonical map.
+    """
+    if not country:
+        return None
+    val = str(country).strip().upper()
+    return CANONICAL_COUNTRY_MAP.get(val)
+
+
 class CountryRouter:
     """Manages country-specific target tables with 'latest record wins' deduplication."""
 
@@ -23,14 +55,11 @@ class CountryRouter:
         self.conn = conn or duckdb.connect(":memory:")
 
     def get_table_name_for_country(self, country: Optional[str]) -> str:
-        """Resolve clean standardized and sanitized table name for a country code."""
-        if not country:
-            return "table_unknown"
-        norm = country.strip().upper()
-        if norm in self.COUNTRY_TABLE_MAP:
-            return self.COUNTRY_TABLE_MAP[norm]
-        clean_name = re.sub(r"[^a-zA-Z0-9_]", "", norm).lower()
-        return f"table_{clean_name}"
+        """Resolve clean standardized table name for a country code."""
+        canonical = normalize_country(country)
+        if canonical and canonical in CANONICAL_TABLE_MAP:
+            return CANONICAL_TABLE_MAP[canonical]
+        raise ValueError(f"Unmapped country: cannot route '{country}' to a target table")
 
     def ensure_target_table(self, table_name: str) -> None:
         """Ensure a country target table exists with strict identifier validation."""

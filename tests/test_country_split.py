@@ -175,3 +175,8 @@ class TestCountrySplitAndDeduplication:
         assert usa_rows[0]["member_id"] == "1"
         assert usa_rows[0]["member_name"] == "John Smith"
         assert usa_rows[0]["source_system"] == "USA"
+
+    def test_unmapped_country_raises_error(self):
+        router = CountryRouter()
+        with pytest.raises(ValueError, match="Unmapped country"):
+            router.get_table_name_for_country("GERMANY")

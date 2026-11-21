@@ -2,6 +2,7 @@
 from datetime import date, datetime
 from typing import Optional, Tuple, List, Dict, Any, Set
 from src.models import RawMemberRecord, CleanMemberRecord, QuarantineRecord, ValidationResult
+from src.country_router import normalize_country
 
 # Valid business domain sets
 VALID_TIER_CODES = {"PLT", "GLD", "SLV"}
@@ -151,10 +152,16 @@ def validate_member_record(raw: RawMemberRecord) -> Tuple[Optional[CleanMemberRe
         return None, f"Field length exceeded: State exceeds 5 characters ('{clean_state}')"
 
     clean_country = sanitize_string(raw.country)
-    if clean_country:
-        clean_country = clean_country.upper()
-        if len(clean_country) > 5:
-            return None, f"Field length exceeded: Country exceeds 5 characters ('{clean_country}')"
+    if not clean_country:
+        return None, "Unmapped country: Country is required and cannot be empty"
+    clean_country = clean_country.upper()
+    if len(clean_country) > 5:
+        return None, f"Field length exceeded: Country exceeds 5 characters ('{clean_country}')"
+
+    canonical_country = normalize_country(clean_country)
+    if not canonical_country:
+        return None, f"Unmapped country: '{clean_country}' is not recognized as a mapped country"
+    clean_country = canonical_country
 
     clean_tier = sanitize_string(raw.tier_code)
     if clean_tier:

@@ -163,10 +163,47 @@ class TestMemberValidation:
             member_id="223457",
             enrollment_date="20101012",
             tier_code="VIP",  # Not in PLT, GLD, SLV
+            country="USA",
         )
         record, err = validate_member_record(raw)
         assert record is None
         assert "Invalid domain value: Tier_Code 'VIP'" in err
+
+    def test_country_canonicalization_and_unmapped_quarantine(self):
+        # AUS canonicalizes to AU
+        rec1, err1 = validate_member_record(
+            RawMemberRecord(member_name="A", member_id="1", enrollment_date="20200101", country="AUS")
+        )
+        assert err1 is None
+        assert rec1.country == "AU"
+
+        # INDIA canonicalizes to IND
+        rec2, err2 = validate_member_record(
+            RawMemberRecord(member_name="B", member_id="2", enrollment_date="20200101", country="INDIA")
+        )
+        assert err2 is None
+        assert rec2.country == "IND"
+
+        # PH canonicalizes to PHIL
+        rec3, err3 = validate_member_record(
+            RawMemberRecord(member_name="C", member_id="3", enrollment_date="20200101", country="PH")
+        )
+        assert err3 is None
+        assert rec3.country == "PHIL"
+
+        # Unmapped country gets quarantined
+        rec4, err4 = validate_member_record(
+            RawMemberRecord(member_name="D", member_id="4", enrollment_date="20200101", country="GER")
+        )
+        assert rec4 is None
+        assert "Unmapped country" in err4
+
+        # Missing country gets quarantined
+        rec5, err5 = validate_member_record(
+            RawMemberRecord(member_name="E", member_id="5", enrollment_date="20200101", country=None)
+        )
+        assert rec5 is None
+        assert "Unmapped country" in err5
 
 
 class TestBatchValidationAndDLQ:
