@@ -12,19 +12,15 @@ class TestCountrySplitAndDeduplication:
         router = CountryRouter(engine.conn)
 
         records = [
-            CleanMemberRecord(member_id="101", member_name="Elena", enrollment_date=date(2010, 1, 1), country="USA"),
-            CleanMemberRecord(member_id="102", member_name="Ravi", enrollment_date=date(2010, 1, 1), country="IND"),
-            CleanMemberRecord(member_id="103", member_name="Mateo", enrollment_date=date(2010, 1, 1), country="PHIL"),
-            CleanMemberRecord(member_id="104", member_name="Nora", enrollment_date=date(2010, 1, 1), country="CAN"),
-            CleanMemberRecord(member_id="105", member_name="Jacob", enrollment_date=date(2010, 1, 1), country="AU"),
+            CleanMemberRecord(member_id="101", member_name="Sam", enrollment_date=date(2010, 1, 1), country="USA"),
+            CleanMemberRecord(member_id="102", member_name="Vikas", enrollment_date=date(2010, 1, 1), country="IND"),
+            CleanMemberRecord(member_id="103", member_name="Mike", enrollment_date=date(2010, 1, 1), country="AU"),
         ]
         engine.load_clean_records(records)
         counts = router.execute_country_split()
 
         assert counts["table_usa"] == 1
         assert counts["table_india"] == 1
-        assert counts["table_philippines"] == 1
-        assert counts["table_canada"] == 1
         assert counts["table_australia"] == 1
 
         usa_rows = router.get_country_records("table_usa")

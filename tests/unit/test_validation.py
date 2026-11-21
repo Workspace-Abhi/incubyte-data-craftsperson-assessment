@@ -193,12 +193,12 @@ class TestMemberValidation:
         assert err2 is None
         assert rec2.country == "IND"
 
-        # PH canonicalizes to PHIL
+        # PH is unmapped and gets quarantined
         rec3, err3 = validate_member_record(
             RawMemberRecord(member_name="C", member_id="3", enrollment_date="20200101", country="PH")
         )
-        assert err3 is None
-        assert rec3.country == "PHIL"
+        assert rec3 is None
+        assert "Unmapped country" in err3
 
         # Unmapped country gets quarantined
         rec4, err4 = validate_member_record(

@@ -46,40 +46,39 @@ def main():
 
     root_dir = Path(__file__).resolve().parent.parent.parent
     data_dir = root_dir / "data"
+    raw_dir = data_dir / "raw"
     samples_dir = data_dir / "samples"
     derived_dir = data_dir / "derived"
-
-    flat_file = samples_dir / "sample_member_profile.dat"
-    if not flat_file.exists():
-        flat_file = data_dir / "sample_member_profile.dat"
 
     json_file = samples_dir / "sample_redemptions.json"
     if not json_file.exists():
         json_file = data_dir / "sample_redemptions.json"
 
-    csv_candidates = [
-        (derived_dir / "IND.csv", "IND"),
-        (derived_dir / "USA.csv", "USA"),
-        (derived_dir / "AUS.csv", "AUS"),
-        (data_dir / "IND.csv", "IND"),
-        (data_dir / "USA.csv", "USA"),
-        (data_dir / "AUS.csv", "AUS"),
-    ]
-    csv_mappings = {str(p): c for p, c in csv_candidates if p.exists()}
-    csv_date_hints = {str(p): "USA" for p in [derived_dir / "USA.csv", data_dir / "USA.csv"] if p.exists()}
+    # Ingest only company raw files: IND.csv, USA.csv, and AUS.xlsx
+    csv_mappings = {
+        str(raw_dir / "IND.csv"): "IND",
+        str(raw_dir / "USA.csv"): "USA",
+    }
+    xlsx_mappings = {
+        str(raw_dir / "AUS.xlsx"): "AUS",
+    }
+    csv_date_hints = {
+        str(raw_dir / "USA.csv"): "USA",
+    }
 
     print(f"Data Directory: {data_dir}")
-    print(f"Ingesting Flat File: {flat_file.name}")
-    print(f"Ingesting Partner JSON: {json_file.name}")
-    print("Ingesting Legacy Country CSVs (tagged by source_system): IND.csv, USA.csv, AUS.csv")
+    print("Ingesting Company Raw Feeds: IND.csv, USA.csv, AUS.xlsx")
+    if json_file.exists():
+        print(f"Ingesting Partner JSON: {json_file.name}")
 
     pipeline = SkyPointsPipeline()
     # Fixed reference date matching assessment data timeframe
     ref_date = date(2024, 1, 15)
     result = pipeline.run(
-        flat_file_path=str(flat_file) if flat_file.exists() else None,
+        flat_file_path=None,
         json_file_path=str(json_file) if json_file.exists() else None,
-        csv_file_mappings={p: c for p, c in csv_mappings.items() if Path(p).exists()},
+        csv_file_mappings=csv_mappings,
+        xlsx_file_mappings=xlsx_mappings,
         csv_date_format_hints=csv_date_hints,
         reference_date=ref_date,
     )

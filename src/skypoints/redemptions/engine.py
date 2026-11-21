@@ -283,12 +283,10 @@ class RedemptionParser:
         Reads from country target tables (table_india, table_usa, table_canada, table_philippines, table_australia)
         by default, ensuring historical members not in the current batch remain present in the analytical mart.
         """
-        # Ensure all 5 country target tables exist so UNION ALL is always safe
+        # Ensure all 3 country target tables exist so UNION ALL is always safe
         country_tables = [
             "table_india",
             "table_usa",
-            "table_canada",
-            "table_philippines",
             "table_australia",
         ]
         for tbl in country_tables:
@@ -320,10 +318,6 @@ class RedemptionParser:
             SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_india
             UNION ALL
             SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_usa
-            UNION ALL
-            SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_canada
-            UNION ALL
-            SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_philippines
             UNION ALL
             SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_australia;
         """)
