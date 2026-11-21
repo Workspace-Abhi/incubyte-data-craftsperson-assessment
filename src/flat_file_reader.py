@@ -89,10 +89,7 @@ def read_csv_file(
     if not path.exists():
         return records
 
-    # Auto-detect USA format hint if not provided and filename contains USA
     hint = date_format_hint
-    if hint is None and "USA" in path.name.upper():
-        hint = "USA"
 
     src_system = path.stem.upper() if path.stem else "CSV"
 

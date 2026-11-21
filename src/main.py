@@ -54,6 +54,9 @@ def main():
         str(data_dir / "USA.csv"): "USA",
         str(data_dir / "AUS.csv"): "AUS",
     }
+    csv_date_hints = {
+        str(data_dir / "USA.csv"): "USA",
+    }
 
     print(f"Data Directory: {data_dir}")
     print(f"Ingesting Flat File: {flat_file.name}")
@@ -67,6 +70,7 @@ def main():
         flat_file_path=str(flat_file) if flat_file.exists() else None,
         json_file_path=str(json_file) if json_file.exists() else None,
         csv_file_mappings={p: c for p, c in csv_mappings.items() if Path(p).exists()},
+        csv_date_format_hints=csv_date_hints,
         reference_date=ref_date,
     )
 
@@ -76,6 +80,7 @@ def main():
     print(f"  Valid Staged Records       : {m.valid_records_count}")
     print(f"  Quarantined (DLQ) Records  : {m.quarantined_records_count}")
     print(f"  Key Collisions Detected    : {m.key_collisions_count}")
+    print(f"  Orphan Redemptions Detected: {len(result.orphan_redemptions)}")
 
     if result.quarantined_records:
         print("\n  [Dead Letter Queue Samples (Quarantined)]")

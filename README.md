@@ -109,7 +109,7 @@ python -m src.main
 | Challenge | Solution at Billions Scale |
 | :--- | :--- |
 | **Data Ingestion Bottleneck** | Auto-ingest via Snowflake Snowpipe or distributed PySpark chunked readers. Raw landing tables store unparsed strings to avoid load aborts. |
-| **Partitioning Strategy** | Target tables partitioned by `Country` and clustered by `Member_Id`. Prunes 95%+ of partition scans during country-specific queries. |
+| **Storage & Clustering Strategy** | Target tables are physically split per country (e.g. TABLE_INDIA, TABLE_USA) and clustered on MEMBER_ID. Snowflake does not use traditional filesystem partitions; micro-partition clustering ensures minimal data scanning during point lookups and analytical aggregations. |
 | **Deduplication at Scale** | Micro-batch deduping using partition pruning on `ingestion_date` and hash-based distributed joins. |
 | **Fault Tolerance & DLQ** | Non-blocking quarantine pattern (DLQ). Malformed rows never crash daily ingestion; alerted via metrics. |
 | **Idempotency** | Target tables populated via deterministic `MERGE INTO` operations, making pipelines safely rerunnable. |
@@ -126,7 +126,7 @@ python -m src.main
 ```bash
 python -m pytest tests/ -v
 ```
-All 35 unit and integration tests validate parsing, validations, derivations, country routing, JSON flattening, and full pipeline execution.
+All 46 unit and integration tests validate parsing, validations, derivations, country routing, JSON flattening, SQL contracts, and full pipeline execution.
 
 ### 2. Run the Live Demonstration Pipeline
 ```bash
@@ -136,24 +136,31 @@ Outputs live formatted tables showing ingestion metrics, DLQ quarantine items, c
 
 ---
 
-## 5. Design Assumptions, Trade-offs & Specification Clarifications
+## 5. Known Limitations & Design Assumptions
 
-1. **Member Name vs Member ID Key Column**:
+1. **Member Name vs Member ID as Primary Key**:
    - The assessment brief table marks `Member Name` as `Key Column: Y` and `Member ID` as `Key Column: N`.
-   - In airline domain architecture, names are non-unique (multiple passengers can share the same name). `Member ID` is the true unique surrogate key. Our architecture treats `Member ID` as the primary key while strictly enforcing `Member Name` as mandatory non-null.
+   - In airline domain architecture, passenger names are non-unique (homonyms). `Member ID` is the true unique surrogate key. Our architecture treats `Member ID` as the primary key while strictly enforcing `Member Name` as mandatory non-null.
 2. **Post Code Specification Omission in Sample Data**:
    - PDF Page 2 lists `Post Code (Position 9, INT, N)`.
    - However, the actual sample flat file feed on the exact same page contains 11 pipe-delimited values and omits the Post Code field:
      `|D|Elena|223457|20101012|20121013|GLD|Sam|CA|USA|03051985|A`
-   - Our reader handles both positional layouts gracefully.
-3. **Multi-Source ID Namespacing (Cross-File Collision Prevention)**:
-   - When ingesting separate regional extracts (`IND.csv`, `USA.csv`, `AUS.csv`), local source systems often reset auto-increment sequences (e.g. ID 1 for Vikas in IND, ID 1 for Sam in USA).
-   - Our pipeline supports country-prefixed namespacing (`namespace_csv_ids=True`) and explicit intra-batch collision detection to prevent cross-file data loss.
-4. **COMPLETED vs PENDING Redemption Miles**:
+   - Both Snowflake DDL and Python validation support length checks (up to 5 digits) and numeric type checks for `Post_Code` when present, while tolerating feeds where it is absent.
+3. **Domain Value Assumptions for Tier and Active Status**:
+   - The specification lists `Tier_Code` and `Is_Active` without an exhaustive enumeration.
+   - We assumed valid tiers are strictly `{PLT, GLD, SLV}` (Platinum, Gold, Silver) and valid active flags are `{A, I}` (Active, Inactive). Out-of-domain values are quarantined to the DLQ.
+4. **Snowflake SQL Verification Environment**:
+   - The SQL scripts in `sql/snowflake/` (`ddl.sql` and `transformations.sql`) are production runbooks featuring mapping-driven Snowflake Scripting (`EXECUTE IMMEDIATE`, dynamic cursor loops, join-based anti-check DELETEs, and idempotent MERGEs).
+   - This SQL has not been executed against a live Snowflake account; schema contracts and syntax parity are verified via automated tests.
+5. **DuckDB as a Local Stand-in for Billion-Row Snowflake Design**:
+   - For local development, testing, and CI/CD demonstration, DuckDB is utilized as an in-memory embedded OLAP engine.
+   - In production for billions of records, the architecture maps to Snowflake Snowpipe auto-ingest, micro-partition clustering on `MEMBER_ID`, and scheduled Snowflake Tasks or dbt models executing the transformation SQL.
+6. **Cross-System Identity & Ambiguous Redemptions**:
+   - Rather than mutating member IDs with prefixes, the pipeline preserves raw IDs and introduces a `source_system` field (`FLAT_FILE`, `IND`, `USA`, `AUS`).
+   - Deduplication and migration tracking use composite identity `(source_system, member_id)`.
+   - Redemptions are joined on `member_id` only when exactly one source system contains that `member_id`. If ambiguous across multiple sources, the transaction is quarantined with reason `'Ambiguous member_id across source systems'`. Transactions with unknown member IDs are captured as `orphan_redemptions`.
+7. **COMPLETED vs PENDING Redemption Miles**:
    - `total_miles_redeemed` reflects cleared mileage balance (`status = 'COMPLETED'`), while `pending_miles_redeemed` tracks unsettled transactions separately to ensure financial accuracy.
-5. **Snowflake Physical Architecture**:
-   - Country separation is achieved via physically separated country target tables (`TABLE_INDIA`, `TABLE_USA`, etc.) clustered on `MEMBER_ID`.
-   - Age calculation in Snowflake uses exact calendar math (`DATEDIFF(year, ...) - CASE WHEN ...`) rather than `/ 365.25` approximation.
 
 ---
 

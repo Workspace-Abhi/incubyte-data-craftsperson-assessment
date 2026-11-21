@@ -30,6 +30,7 @@ class PipelineResult:
     key_collisions: List[str]
     loyalty_360_data: List[Dict[str, Any]]
     country_data: Dict[str, List[Dict[str, Any]]]
+    orphan_redemptions: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class SkyPointsPipeline:
@@ -46,6 +47,7 @@ class SkyPointsPipeline:
         flat_file_path: Optional[str] = None,
         json_file_path: Optional[str] = None,
         csv_file_mappings: Optional[Dict[str, str]] = None,
+        csv_date_format_hints: Optional[Dict[str, str]] = None,
         reference_date: Optional[date] = None,
     ) -> PipelineResult:
         """Execute end-to-end pipeline.
@@ -64,13 +66,17 @@ class SkyPointsPipeline:
         if flat_file_path:
             raw_records.extend(read_pipe_delimited_file(flat_file_path))
 
-        # 2. Ingest CSV files with country namespacing to prevent data loss across files
+        # 2. Ingest CSV files preserving raw IDs with explicit date format hints
         if csv_file_mappings:
+            hints = csv_date_format_hints or {}
+            from pathlib import Path
             for csv_path, default_country in csv_file_mappings.items():
+                hint = hints.get(csv_path) or hints.get(Path(csv_path).name)
                 raw_records.extend(
                     read_csv_file(
                         csv_path,
                         default_country=default_country,
+                        date_format_hint=hint,
                     )
                 )
 
@@ -93,6 +99,26 @@ class SkyPointsPipeline:
 
         # 7. Generate Loyalty 360 mart view (sums only COMPLETED miles)
         loyalty_360 = self.redemption_parser.build_loyalty_360_mart("tmp_latest_members")
+
+        # 8. Identify orphan redemptions whose member_id does not exist in member data
+        orphan_rows = self.conn.execute("""
+            SELECT r.txn_id, r.member_id, r.feed_date, r.txn_date, r.partner, r.miles_redeemed, r.status
+            FROM stg_redemptions_flattened r
+            WHERE r.member_id NOT IN (SELECT DISTINCT member_id FROM tmp_latest_members)
+        """).fetchall()
+
+        orphan_redemptions = [
+            {
+                "txn_id": row[0],
+                "member_id": row[1],
+                "feed_date": str(row[2]),
+                "txn_date": str(row[3]),
+                "partner": row[4],
+                "miles_redeemed": row[5],
+                "status": row[6],
+            }
+            for row in orphan_rows
+        ]
 
         # Collect country data
         country_data: Dict[str, List[Dict[str, Any]]] = {}
@@ -118,4 +144,5 @@ class SkyPointsPipeline:
             key_collisions=val_result.key_collisions,
             loyalty_360_data=loyalty_360,
             country_data=country_data,
+            orphan_redemptions=orphan_redemptions,
         )

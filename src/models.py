@@ -1,6 +1,6 @@
 """Data models for raw, validated, and quarantined member records."""
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional, List, Dict, Any
 
 
@@ -43,7 +43,7 @@ class CleanMemberRecord:
 class QuarantineRecord:
     raw_data: Dict[str, Any]
     error_reason: str
-    quarantined_at: datetime = field(default_factory=datetime.utcnow)
+    quarantined_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass

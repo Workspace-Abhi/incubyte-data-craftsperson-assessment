@@ -42,3 +42,31 @@ def test_full_pipeline_with_sample_files():
     assert elena["total_miles_redeemed"] == 12000  # Only COMPLETED miles!
     assert elena["pending_miles_redeemed"] == 5000  # PENDING miles tracked separately!
     assert elena["top_partner"] in ("AeroLink", "SkyPoints")
+    assert isinstance(result.orphan_redemptions, list)
+
+
+def test_pipeline_orphan_redemptions_detection(tmp_path):
+    import json
+    pipeline = SkyPointsPipeline()
+
+    # Create dummy redemption JSON with an orphan member_id
+    orphan_payload = {
+        "feed_date": "20240115",
+        "member_id": "ORPHAN_MEMBER_999",
+        "redemptions": [
+            {
+                "txn_id": "ORPHAN_TXN_01",
+                "txn_date": "20240110",
+                "partner": "SkyPoints",
+                "miles_redeemed": 500,
+                "status": "COMPLETED",
+            }
+        ],
+    }
+    json_file = tmp_path / "orphan_feed.json"
+    json_file.write_text(json.dumps(orphan_payload), encoding="utf-8")
+
+    result = pipeline.run(json_file_path=str(json_file))
+    assert len(result.orphan_redemptions) == 1
+    assert result.orphan_redemptions[0]["member_id"] == "ORPHAN_MEMBER_999"
+    assert result.orphan_redemptions[0]["txn_id"] == "ORPHAN_TXN_01"
