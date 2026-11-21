@@ -94,17 +94,24 @@ SELECT PARSE_JSON('{
     ]
 }'), '20240115';
 
--- Step 4: Run production transformations
-!source sql/snowflake/transformations.sql
+-- Step 4: Run production pipeline via run_all.sql (Run 1)
+!source sql/snowflake/run_all.sql
 
--- Step 5: Run production country merges
-!source sql/snowflake/generated_country_merges.sql
+-- Step 5: Capture snapshot of mart and table counts BEFORE rerun into temporary table
+CREATE OR REPLACE TEMPORARY TABLE PRE_RERUN_SNAPSHOT AS
+SELECT
+    (SELECT COUNT(*) FROM STG_MEMBER_PROFILE) AS STG_MEMBER_COUNT,
+    (SELECT COUNT(*) FROM RAW_DLQ_QUARANTINE) AS DLQ_COUNT,
+    (SELECT COUNT(*) FROM STG_REDEMPTIONS_FLATTENED) AS STG_REDEMP_COUNT,
+    (SELECT COUNT(*) FROM MEMBER_LOYALTY_360) AS MART_COUNT,
+    (SELECT COUNT(*) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101' AND COUNTRY = 'IND') AS MOVE_101_COUNTRY_CORRECT,
+    (SELECT TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_COMPLETED_MILES,
+    (SELECT TO_VARCHAR(COALESCE(PENDING_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_PENDING_MILES;
 
--- Step 5B: Execute Idempotent Rerun (run transformations.sql a second time)
+-- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 2)
 -- Landing rows have been stamped with PROCESSED_AT, so a rerun processes 0 new rows
--- and does not duplicate staging or DLQ records.
-!source sql/snowflake/transformations.sql
-!source sql/snowflake/generated_country_merges.sql
+-- and does not duplicate staging, DLQ, or mart records.
+!source sql/snowflake/run_all.sql
 
 -- Step 6: Single evaluation query returning scenario, expected, actual, PASS/FAIL
 WITH AssertionResults AS (
@@ -213,20 +220,49 @@ WITH AssertionResults AS (
 
     UNION ALL
 
-    -- Scenario 8: Duplicate txn_id replay is idempotent (miles not doubled)
+    -- Scenario 8A: Mart before rerun has expected total member rows
     SELECT
         10 AS test_id,
-        'Duplicate txn_id replay: idempotent merge (miles not doubled)' AS scenario,
+        'Mart before rerun: MEMBER_LOYALTY_360 total member rows' AS scenario,
+        '5' AS expected,
+        TO_VARCHAR(MART_COUNT) AS actual
+    FROM PRE_RERUN_SNAPSHOT
+
+    UNION ALL
+
+    -- Scenario 8B: Mart before rerun reflects country merge (MOVE_101 updated to IND)
+    SELECT
+        11 AS test_id,
+        'Mart before rerun: MOVE_101 country updated to IND' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(MOVE_101_COUNTRY_CORRECT) AS actual
+    FROM PRE_RERUN_SNAPSHOT
+
+    UNION ALL
+
+    -- Scenario 8C: Mart before rerun: COMPLETED miles summed correctly and duplicate replay ignored
+    SELECT
+        12 AS test_id,
+        'Mart before rerun: MOVE_101 COMPLETED miles summed correctly' AS scenario,
         '5000' AS expected,
-        TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) AS actual
-    FROM MEMBER_LOYALTY_360
-    WHERE MEMBER_ID = 'MOVE_101'
+        MOVE_101_COMPLETED_MILES AS actual
+    FROM PRE_RERUN_SNAPSHOT
+
+    UNION ALL
+
+    -- Scenario 8D: Mart before rerun: PENDING miles tracked separately
+    SELECT
+        13 AS test_id,
+        'Mart before rerun: MOVE_101 PENDING miles tracked separately' AS scenario,
+        '0' AS expected,
+        MOVE_101_PENDING_MILES AS actual
+    FROM PRE_RERUN_SNAPSHOT
 
     UNION ALL
 
     -- Scenario 9: Ambiguous member_id redemption quarantined
     SELECT
-        11 AS test_id,
+        14 AS test_id,
         'Ambiguous member_id redemption: quarantined into DLQ' AS scenario,
         '1' AS expected,
         TO_VARCHAR(COUNT(*)) AS actual
@@ -236,23 +272,39 @@ WITH AssertionResults AS (
 
     UNION ALL
 
-    -- Scenario 10: Staging member row count unchanged after rerun (idempotent batch tracking)
+    -- Scenario 10A: Staging member row count unchanged after rerun (idempotent batch tracking)
     SELECT
-        12 AS test_id,
-        'Rerun idempotency: STG_MEMBER_PROFILE count unchanged on rerun' AS scenario,
-        '6' AS expected,
-        TO_VARCHAR(COUNT(*)) AS actual
-    FROM STG_MEMBER_PROFILE
+        15 AS test_id,
+        'Rerun delta: STG_MEMBER_PROFILE row count unchanged' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR((SELECT COUNT(*) FROM STG_MEMBER_PROFILE) - (SELECT STG_MEMBER_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 
-    -- Scenario 11: DLQ row count unchanged after rerun (idempotent DLQ merges)
+    -- Scenario 10B: DLQ row count unchanged after rerun (idempotent DLQ merges)
     SELECT
-        13 AS test_id,
-        'Rerun idempotency: RAW_DLQ_QUARANTINE count unchanged on rerun' AS scenario,
-        '5' AS expected,
-        TO_VARCHAR(COUNT(*)) AS actual
-    FROM RAW_DLQ_QUARANTINE
+        16 AS test_id,
+        'Rerun delta: RAW_DLQ_QUARANTINE row count unchanged' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR((SELECT COUNT(*) FROM RAW_DLQ_QUARANTINE) - (SELECT DLQ_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+
+    UNION ALL
+
+    -- Scenario 10C: Staging redemptions count unchanged after rerun
+    SELECT
+        17 AS test_id,
+        'Rerun delta: STG_REDEMPTIONS_FLATTENED row count unchanged' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR((SELECT COUNT(*) FROM STG_REDEMPTIONS_FLATTENED) - (SELECT STG_REDEMP_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+
+    UNION ALL
+
+    -- Scenario 10D: Mart row count unchanged after rerun
+    SELECT
+        18 AS test_id,
+        'Rerun delta: MEMBER_LOYALTY_360 row count unchanged' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR((SELECT COUNT(*) FROM MEMBER_LOYALTY_360) - (SELECT MART_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 )
 SELECT
     scenario,

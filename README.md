@@ -141,12 +141,26 @@ All **53 unit and integration tests** execute locally against in-memory DuckDB, 
 - Analytical mart aggregation from country tables without side effects.
 - Static generation zero-drift and Snowflake SQL structural contracts.
 
-### 2. Snowflake Warehouse Smoke Test (Behavioral Verification)
+### 2. Snowflake Warehouse Production Pipeline & Smoke Test
+#### Running the Production Pipeline via SnowSQL
+The pipeline execution is orchestrated in a unified SnowSQL session via [`sql/snowflake/run_all.sql`](sql/snowflake/run_all.sql):
+```sql
+!source sql/snowflake/run_all.sql
+```
+This executes the four production components in strict sequence:
+1. [`sql/snowflake/ddl.sql`](sql/snowflake/ddl.sql): Tables, views, and country mapping reference tables.
+2. [`sql/snowflake/transformations.sql`](sql/snowflake/transformations.sql): Validation DLQ, staging load, deduplication, and JSON flattening.
+3. [`sql/snowflake/generated_country_merges.sql`](sql/snowflake/generated_country_merges.sql): Routing MERGEs and cross-country migration DELETEs.
+4. [`sql/snowflake/03_mart_and_finalize.sql`](sql/snowflake/03_mart_and_finalize.sql): Member Loyalty 360 analytical mart aggregation and landing batch finalization.
+
+*Note*: Because `$run_batch_id` is a Snowflake session variable, all four scripts must run within the same session.
+
+#### Behavioral Verification via Smoke Test
 To verify the SQL behaviorally against a live Snowflake warehouse (without mock engines):
 1. Log into your Snowflake account and open a **Worksheet**.
 2. Open [`sql/snowflake/smoke_test.sql`](sql/snowflake/smoke_test.sql) and copy its entire contents into the worksheet.
 3. Click **Run All** (execution takes ~1-2 minutes).
-4. Review the final assertion result table. It validates 13 assertions across all test scenarios including rerun idempotency, returning `PASS` for each.
+4. Review the final assertion result table. It validates all assertions before and after rerun via `run_all.sql`.
 
 #### Smoke Test Results
 > **Verification run**: Trial Snowflake account on `<DATE>`
