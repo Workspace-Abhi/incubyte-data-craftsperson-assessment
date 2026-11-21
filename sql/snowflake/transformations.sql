@@ -195,8 +195,9 @@ WHERE s.RECORD_TYPE = 'D'
 
 -- ----------------------------------------------------------------------------
 -- STEP 2B: Collision Resolution (Renames & Key Collisions)
--- Detects (SOURCE_SYSTEM, MEMBER_ID) groups with differing names where at least
--- one record was introduced in the current batch.
+-- Detects (SOURCE_SYSTEM, MEMBER_ID) groups with differing names INSIDE the
+-- current batch (BATCH_ID = $run_batch_id). A rename across distinct batches
+-- is treated as a normal update without DLQ rejection.
 -- Identifies the row with the latest COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE),
 -- tie-breaking on INGESTED_AT DESC, STG_ROW_ID, and idempotently quarantines
 -- older conflicting rows to RAW_DLQ_QUARANTINE.
@@ -208,12 +209,16 @@ WHERE s.RECORD_TYPE = 'D'
 -- ----------------------------------------------------------------------------
 MERGE INTO RAW_DLQ_QUARANTINE target
 USING (
-    WITH MultiNameGroups AS (
-        SELECT SOURCE_SYSTEM, MEMBER_ID
+    WITH CurrentBatchMembers AS (
+        SELECT *
         FROM STG_MEMBER_PROFILE
+        WHERE BATCH_ID = $run_batch_id
+    ),
+    MultiNameGroups AS (
+        SELECT SOURCE_SYSTEM, MEMBER_ID
+        FROM CurrentBatchMembers
         GROUP BY SOURCE_SYSTEM, MEMBER_ID
-        HAVING COUNT(CASE WHEN BATCH_ID = $run_batch_id THEN 1 END) > 0
-           AND COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1
+        HAVING COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1
     ),
     RankedCollisions AS (
         SELECT
@@ -222,7 +227,7 @@ USING (
                 PARTITION BY s.SOURCE_SYSTEM, s.MEMBER_ID
                 ORDER BY COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.STG_ROW_ID
             ) AS RN
-        FROM STG_MEMBER_PROFILE s
+        FROM CurrentBatchMembers s
         JOIN MultiNameGroups g ON s.SOURCE_SYSTEM = g.SOURCE_SYSTEM AND s.MEMBER_ID = g.MEMBER_ID
     )
     SELECT

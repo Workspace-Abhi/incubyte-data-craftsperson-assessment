@@ -71,7 +71,14 @@ INSERT INTO RAW_MEMBER_LANDING (
 ('D', 'USA_SYS', 'BAD_DUP_1', 'Bad Usa User', '20220101', '20230101', 'GLD', 'AgentI', 'BER', 'GERMANY', '01011990', 'A', '10001', 'USA_bad.csv'),
 
 -- 9. Bad row arriving in Batch 1 (will be repeated in Batch 2)
-('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat');
+('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+
+-- 10. Member BATCH_REN_1 original name in Batch 1 (will be renamed in Batch 2)
+('D', 'FLAT_FILE', 'BATCH_REN_1', 'Original Name', '20200101', '20210101', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+
+-- 11. Member RESOLVE_101 ambiguous across two sources in Batch 1 (will be resolved in Batch 2)
+('D', 'IND_SYS', 'RESOLVE_101', 'Rahul Ind', '20200101', '20210101', 'GLD', 'AgentL', 'MH', 'IND', '01011990', 'A', '40001', 'ind_1.dat'),
+('D', 'USA_SYS', 'RESOLVE_101', 'Sam Usa', '20200101', '20210101', 'GLD', 'AgentL', 'CA', 'USA', '01011990', 'A', '90210', 'usa_1.dat');
 
 -- Redemption fixtures
 -- Replay fixture: identical TXN_REPLAY_1 sent twice
@@ -105,15 +112,34 @@ SELECT PARSE_JSON('{
     ]
 }'), '20240115';
 
+-- Ambiguity round-trip fixture: RESOLVE_101 initially ambiguous, resolved in Batch 2
+INSERT INTO RAW_REDEMPTIONS_LANDING (FEED_PAYLOAD, FEED_DATE)
+SELECT PARSE_JSON('{
+    "member_id": "RESOLVE_101",
+    "feed_date": "20240115",
+    "redemptions": [
+        {"txn_id": "TXN_RESOLVE_1", "txn_date": "20240110", "partner": "SkyPoints", "miles_redeemed": 3000, "status": "COMPLETED"}
+    ]
+}'), '20240115';
+
 -- Step 4: Run production pipeline via run_all.sql (Run 1: Processes Initial Batches)
 !source sql/snowflake/run_all.sql
 
--- Step 4B: Load Batch 2 with identical malformed record arriving in a second batch
+-- Step 4B: Load Batch 2 arriving in a separate batch
+-- Includes:
+-- 1. Identical malformed record to test multi-batch reject preservation
+-- 2. Rename across batches: BATCH_REN_1 renamed to 'Updated Name' with newer flight date
+-- 3. Ambiguity resolution: remove spurious secondary source for RESOLVE_101 so ambiguity disappears
 INSERT INTO RAW_MEMBER_LANDING (
     RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
     TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
 ) VALUES
-('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat');
+('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat'),
+('D', 'FLAT_FILE', 'BATCH_REN_1', 'Updated Name', '20200101', '20230601', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat');
+
+-- Resolve ambiguity for RESOLVE_101 before Batch 2 execution
+DELETE FROM STG_MEMBER_PROFILE WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_101';
+DELETE FROM TABLE_USA WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_101';
 
 -- Step 4C: Run production pipeline for Batch 2 via run_all.sql (Run 2: Processes Batch 2)
 !source sql/snowflake/run_all.sql
@@ -359,6 +385,39 @@ WITH AssertionResults AS (
         TO_VARCHAR(COUNT(*)) AS actual
     FROM RAW_DLQ_QUARANTINE
     WHERE RECORD_ID = 'REPEAT_BAD_1'
+
+    UNION ALL
+
+    -- Scenario 12A: Rename across two batches: no DLQ row created
+    SELECT
+        22 AS test_id,
+        'Rename across two batches: no DLQ row created' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'BATCH_REN_1'
+
+    UNION ALL
+
+    -- Scenario 12B: Rename across two batches: newest name wins in target table
+    SELECT
+        23 AS test_id,
+        'Rename across two batches: newest name wins in target table' AS scenario,
+        'Updated Name' AS expected,
+        MEMBER_NAME AS actual
+    FROM TABLE_USA
+    WHERE MEMBER_ID = 'BATCH_REN_1'
+
+    UNION ALL
+
+    -- Scenario 13: Ambiguity round trip: redemptions return to mart when ambiguity disappears
+    SELECT
+        24 AS test_id,
+        'Ambiguity round trip: redemptions return to mart when ambiguity disappears' AS scenario,
+        '3000' AS expected,
+        TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) AS actual
+    FROM MEMBER_LOYALTY_360
+    WHERE MEMBER_ID = 'RESOLVE_101'
 )
 SELECT
     scenario,

@@ -8,7 +8,19 @@
 -- STEP 5: Loyalty 360 Analytical Mart (Sums Only COMPLETED Miles)
 -- ----------------------------------------------------------------------------
 
--- 1. Idempotently quarantine ambiguous redemptions whose MEMBER_ID spans multiple SOURCE_SYSTEMs
+-- 1. Flag and idempotently quarantine ambiguous redemptions whose MEMBER_ID spans multiple SOURCE_SYSTEMs
+-- History is preserved non-destructively by setting IS_AMBIGUOUS flag rather than deleting.
+UPDATE STG_REDEMPTIONS_FLATTENED r
+SET IS_AMBIGUOUS = CASE
+    WHEN r.MEMBER_ID IN (
+        SELECT MEMBER_ID
+        FROM DEDUPED_LATEST_MEMBERS
+        GROUP BY MEMBER_ID
+        HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
+    ) THEN TRUE
+    ELSE FALSE
+END;
+
 MERGE INTO RAW_DLQ_QUARANTINE target
 USING (
     SELECT
@@ -21,12 +33,7 @@ USING (
         'stg_redemptions' AS SOURCE_FILE_NAME,
         $run_batch_id AS BATCH_ID
     FROM STG_REDEMPTIONS_FLATTENED r
-    WHERE r.MEMBER_ID IN (
-        SELECT MEMBER_ID
-        FROM DEDUPED_LATEST_MEMBERS
-        GROUP BY MEMBER_ID
-        HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
-    )
+    WHERE r.IS_AMBIGUOUS = TRUE
 ) src
 ON target.RECORD_ID = src.RECORD_ID
 AND target.ERROR_REASON = src.ERROR_REASON
@@ -36,16 +43,9 @@ WHEN NOT MATCHED THEN
     INSERT (RECORD_ID, RAW_RECORD, RAW_RECORD_HASH, ERROR_REASON, SOURCE_FEED, SOURCE_SYSTEM, SOURCE_FILE_NAME, BATCH_ID, QUARANTINED_AT)
     VALUES (src.RECORD_ID, src.RAW_RECORD, src.RAW_RECORD_HASH, src.ERROR_REASON, src.SOURCE_FEED, src.SOURCE_SYSTEM, src.SOURCE_FILE_NAME, src.BATCH_ID, CURRENT_TIMESTAMP());
 
-DELETE FROM STG_REDEMPTIONS_FLATTENED
-WHERE MEMBER_ID IN (
-    SELECT MEMBER_ID
-    FROM DEDUPED_LATEST_MEMBERS
-    GROUP BY MEMBER_ID
-    HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
-);
-
 -- 2. Build or Refresh MEMBER_LOYALTY_360 Mart (Idempotent MERGE for affected members)
 -- Keyed on (SOURCE_SYSTEM, MEMBER_ID) from MEMBERS_ALL; touches only members affected by this batch
+-- Excludes IS_AMBIGUOUS = TRUE transactions from analytical calculations
 MERGE INTO MEMBER_LOYALTY_360 target
 USING (
     WITH RedemptionSummary AS (
@@ -58,6 +58,7 @@ USING (
             MAX(TXN_DATE) AS LAST_REDEMPTION_DATE,
             MODE(PARTNER) AS TOP_PARTNER
         FROM STG_REDEMPTIONS_FLATTENED
+        WHERE IS_AMBIGUOUS = FALSE
         GROUP BY MEMBER_ID
     )
     SELECT

@@ -17,6 +17,7 @@ class FlattenedRedemption:
     partner: str
     miles_redeemed: int
     status: str
+    is_ambiguous: bool = False
 
 
 class RedemptionParser:
@@ -38,6 +39,7 @@ class RedemptionParser:
                 partner VARCHAR NOT NULL,
                 miles_redeemed INTEGER NOT NULL,
                 status VARCHAR NOT NULL,
+                is_ambiguous BOOLEAN DEFAULT FALSE,
                 ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -216,31 +218,41 @@ class RedemptionParser:
                 r.partner,
                 r.miles_redeemed,
                 r.status,
+                r.is_ambiguous,
             )
             for r in redemptions
         ]
 
         self.conn.executemany("""
             INSERT OR REPLACE INTO stg_redemptions_flattened (
-                txn_id, member_id, feed_date, txn_date, partner, miles_redeemed, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?);
+                txn_id, member_id, feed_date, txn_date, partner, miles_redeemed, status, is_ambiguous
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
         """, rows)
 
         return len(rows)
 
     def quarantine_ambiguous_redemptions(self, source_members_table: str = "tmp_latest_members") -> List[QuarantineRecord]:
-        """Identify and quarantine redemptions with ambiguous member_id across multiple sources."""
+        """Identify, flag, and quarantine redemptions with ambiguous member_id across multiple sources."""
         quarantined: List[QuarantineRecord] = []
         try:
-            ambiguous_txns = self.conn.execute(f"""
+            # Update IS_AMBIGUOUS flag non-destructively: TRUE if spanning sources, FALSE otherwise
+            self.conn.execute(f"""
+                UPDATE stg_redemptions_flattened
+                SET is_ambiguous = CASE
+                    WHEN member_id IN (
+                        SELECT member_id
+                        FROM {source_members_table}
+                        GROUP BY member_id
+                        HAVING COUNT(DISTINCT source_system) > 1
+                    ) THEN TRUE
+                    ELSE FALSE
+                END;
+            """)
+
+            ambiguous_txns = self.conn.execute("""
                 SELECT r.txn_id, r.member_id, r.feed_date, r.txn_date, r.partner, r.miles_redeemed, r.status
                 FROM stg_redemptions_flattened r
-                WHERE r.member_id IN (
-                    SELECT member_id
-                    FROM {source_members_table}
-                    GROUP BY member_id
-                    HAVING COUNT(DISTINCT source_system) > 1
-                )
+                WHERE r.is_ambiguous = TRUE
             """).fetchall()
 
             for row in ambiguous_txns:
@@ -260,15 +272,6 @@ class RedemptionParser:
 
             if ambiguous_txns:
                 self.quarantined_redemptions.extend(quarantined)
-                self.conn.execute(f"""
-                    DELETE FROM stg_redemptions_flattened
-                    WHERE member_id IN (
-                        SELECT member_id
-                        FROM {source_members_table}
-                        GROUP BY member_id
-                        HAVING COUNT(DISTINCT source_system) > 1
-                    )
-                """)
         except duckdb.CatalogException:
             pass
         return quarantined
@@ -337,6 +340,7 @@ class RedemptionParser:
                     MAX(txn_date) AS last_redemption_date,
                     MODE(partner) AS top_partner
                 FROM stg_redemptions_flattened
+                WHERE is_ambiguous = FALSE
                 GROUP BY member_id
             )
             SELECT

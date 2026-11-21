@@ -69,6 +69,11 @@ def test_snowflake_smoke_test_coverage():
     assert "DLQ reject preservation: same ID in two source systems both bad both quarantined" in content
     assert "DLQ reject preservation: same bad row in two batches yields 2 DLQ rows" in content
 
+    # Batch collision and ambiguity scenarios (P3)
+    assert "Rename across two batches: no DLQ row created" in content
+    assert "Rename across two batches: newest name wins in target table" in content
+    assert "Ambiguity round trip: redemptions return to mart when ambiguity disappears" in content
+
     # Final assertion status reporting
     assert "scenario," in content
     assert "expected," in content
@@ -123,6 +128,7 @@ def test_snowflake_ddl_ref_country_map():
     # DLQ columns in DDL (P2)
     assert "RAW_RECORD_HASH      VARCHAR(64)" in content
     assert "CREATE TABLE IF NOT EXISTS RAW_DLQ_QUARANTINE" in content
+    assert "IS_AMBIGUOUS         BOOLEAN          DEFAULT FALSE" in content
 
     # Task 4: MEMBERS_ALL unified country view
     assert "CREATE OR REPLACE VIEW MEMBERS_ALL AS" in content
@@ -168,9 +174,9 @@ def test_snowflake_transformations_and_merge():
     assert "Invalid domain value: Is_Active must be in (A, I)" in content
     assert "Invalid Last_Flight_Date: unparseable calendar date" in content
 
-    # Key collisions resolution before dedupe & deterministic tie-breaking
+    # Key collisions resolution before dedupe & deterministic tie-breaking (P3 scoped inside current batch)
     assert "Key collision: superseded by newer record" in content
-    assert "HAVING COUNT(CASE WHEN BATCH_ID = $run_batch_id THEN 1 END) > 0" in content
+    assert "CurrentBatchMembers AS" in content
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
     assert "ORDER BY COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.STG_ROW_ID" in content
     assert "ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, STG_ROW_ID" in content
@@ -185,7 +191,11 @@ def test_snowflake_transformations_and_merge():
     assert "MERGE INTO STG_REDEMPTIONS_FLATTENED" in content
     assert "target.TXN_ID = src.TXN_ID" in content
 
-    # Ambiguous redemptions DLQ with RAW_RECORD_HASH
+    # Non-destructive ambiguous redemptions flag & DLQ (P3)
+    assert "UPDATE STG_REDEMPTIONS_FLATTENED" in finalize_content
+    assert "SET IS_AMBIGUOUS" in finalize_content
+    assert "DELETE FROM STG_REDEMPTIONS_FLATTENED" not in finalize_content
+    assert "WHERE IS_AMBIGUOUS = FALSE" in finalize_content
     assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in finalize_content
 
     # Task 4: Idempotent MERGE into MEMBER_LOYALTY_360 from MEMBERS_ALL for affected members

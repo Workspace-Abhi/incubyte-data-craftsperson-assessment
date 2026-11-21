@@ -326,3 +326,72 @@ class TestRedemptionParser:
         assert len(bad) == 2
         assert bad[0].error_reason == "Feed item is not a valid JSON object"
         assert bad[1].error_reason == "Feed item is not a valid JSON object"
+
+    def test_ambiguity_appears_then_disappears_redemptions_return_to_mart(self):
+        conn = duckdb.connect(":memory:")
+        staging = StagingEngine(conn)
+        parser = RedemptionParser(conn)
+
+        # 1. Initially member 'AMBIG_1' exists in two source systems (IND and USA)
+        members = [
+            CleanMemberRecord(
+                member_id="AMBIG_1",
+                member_name="Ravi",
+                enrollment_date=date(2020, 1, 1),
+                country="IND",
+                source_system="IND_SYS",
+            ),
+            CleanMemberRecord(
+                member_id="AMBIG_1",
+                member_name="Sam",
+                enrollment_date=date(2020, 1, 1),
+                country="USA",
+                source_system="USA_SYS",
+            ),
+        ]
+        staging.load_clean_records(members)
+        conn.execute("CREATE OR REPLACE TEMP TABLE tmp_latest_members AS SELECT * FROM stg_member_profile;")
+
+        # Load redemption for AMBIG_1
+        payload = {
+            "feed_date": "20240115",
+            "member_id": "AMBIG_1",
+            "redemptions": [
+                {
+                    "txn_id": "TXN_RESOLVE_1",
+                    "txn_date": "20240110",
+                    "partner": "SkyPoints",
+                    "miles_redeemed": 3500,
+                    "status": "COMPLETED",
+                }
+            ],
+        }
+        redemptions, _ = parser.parse_payload(payload)
+        parser.load_redemptions(redemptions)
+
+        # First quarantine: member spans 2 source systems -> flagged ambiguous
+        q = parser.quarantine_ambiguous_redemptions("tmp_latest_members")
+        assert len(q) == 1
+        is_amb = conn.execute("SELECT is_ambiguous FROM stg_redemptions_flattened WHERE txn_id = 'TXN_RESOLVE_1'").fetchone()[0]
+        assert is_amb is True
+
+        # Mart shows 0 miles
+        mart1 = parser.build_loyalty_360_mart("tmp_latest_members")
+        for m in mart1:
+            if m["member_id"] == "AMBIG_1":
+                assert m["total_miles_redeemed"] == 0
+
+        # 2. Later, ambiguity is resolved: one record is removed or unified, so only 1 source system remains
+        conn.execute("DELETE FROM tmp_latest_members WHERE source_system = 'USA_SYS';")
+
+        # Second quarantine run: ambiguity disappears!
+        q2 = parser.quarantine_ambiguous_redemptions("tmp_latest_members")
+        assert len(q2) == 0
+        is_amb2 = conn.execute("SELECT is_ambiguous FROM stg_redemptions_flattened WHERE txn_id = 'TXN_RESOLVE_1'").fetchone()[0]
+        assert is_amb2 is False
+
+        # Mart recalculates and redemptions return to the mart!
+        mart2 = parser.build_loyalty_360_mart("tmp_latest_members")
+        ambig_winner = [m for m in mart2 if m["member_id"] == "AMBIG_1"][0]
+        assert ambig_winner["total_miles_redeemed"] == 3500
+        assert ambig_winner["total_redemptions"] == 1
