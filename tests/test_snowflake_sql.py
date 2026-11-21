@@ -253,3 +253,23 @@ def test_generated_country_merges_matches_script_output():
     assert "SELECT *" not in actual
     assert "d.SOURCE_SYSTEM = target.SOURCE_SYSTEM" in actual
     assert "d.COUNTRY <> 'IND'" in actual
+
+
+def test_snowflake_ingestion_ddl_and_metadata():
+    """Verify that production ingestion DDL defines stages, file formats, and references METADATA$FILENAME."""
+    ingestion_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "ingestion.sql"
+    assert ingestion_path.exists(), "ingestion.sql must exist"
+    content = ingestion_path.read_text(encoding="utf-8")
+
+    assert "Not executed against a live account" in content
+    assert "FF_PIPE_DELIMITED" in content
+    assert "FF_JSON" in content
+    assert "MEMBER_FEED_STAGE" in content
+    assert "REDEMPTIONS_FEED_STAGE" in content
+    assert "COPY INTO RAW_MEMBER_LANDING" in content
+    assert "COPY INTO RAW_REDEMPTIONS_LANDING" in content
+    assert "METADATA$FILENAME" in content
+    assert "METADATA$FILE_ROW_NUMBER" in content
+    assert "AUTO_INGEST" in content
+    assert "TASK" in content
+    assert "STREAM" in content

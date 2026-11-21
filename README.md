@@ -123,6 +123,15 @@ python -m src.main
 
 ---
 
+## 3B. Production Ingestion Architecture (`ingestion.sql`)
+The file [`sql/snowflake/ingestion.sql`](sql/snowflake/ingestion.sql) provides production Snowflake DDL templates for staging and loading landing data:
+- **Pipe-Delimited Feeds**: Loyalty member files start each record with `|` (making `$1` empty); the `COPY INTO RAW_MEMBER_LANDING` query maps `$2` as `RECORD_TYPE`, `$3` as `MEMBER_NAME`, etc., while capturing `METADATA$FILENAME` into `SOURCE_FILE_NAME` and `METADATA$FILE_ROW_NUMBER` into `LINE_NO`.
+- **JSON Redemption Feeds**: Partner redemption files use file format `FF_JSON` with `STRIP_OUTER_ARRAY = TRUE` to ingest both JSON arrays and standalone objects into `RAW_REDEMPTIONS_LANDING`.
+- **Continuous Orchestration**: Includes documented templates for serverless Snowpipe `AUTO_INGEST` and Snowflake Change Data Capture (`STREAM` + `TASK`) to trigger transformation batches sequentially upon new file arrival.
+*(Note: `ingestion.sql` is a deployment template and has not been executed against a live warehouse).*
+
+---
+
 ## 4. Quickstart: Running Tests & Demonstration
 
 ### Prerequisites
