@@ -278,3 +278,6 @@ def test_snowflake_ingestion_ddl_and_metadata():
     assert "AUTO_INGEST" in content
     assert "TASK" in content
     assert "STREAM" in content
+    assert "CREATE STAGE IF NOT EXISTS" in content
+    assert "ON_ERROR = 'CONTINUE'" in content
+    assert "CREATE OR REPLACE PROCEDURE EXECUTE_SKYPOINTS_PIPELINE" in content

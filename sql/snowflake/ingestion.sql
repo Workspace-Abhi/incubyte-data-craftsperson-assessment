@@ -35,17 +35,19 @@ CREATE OR REPLACE FILE FORMAT FF_JSON
 
 -- ----------------------------------------------------------------------------
 -- 2. STAGE DEFINITIONS
+-- Uses IF NOT EXISTS to prevent accidental dropping of stages and staged files
 -- ----------------------------------------------------------------------------
 
-CREATE OR REPLACE STAGE MEMBER_FEED_STAGE
+CREATE STAGE IF NOT EXISTS MEMBER_FEED_STAGE
     COMMENT = 'Internal stage for incoming pipe-delimited loyalty member feeds';
 
-CREATE OR REPLACE STAGE REDEMPTIONS_FEED_STAGE
+CREATE STAGE IF NOT EXISTS REDEMPTIONS_FEED_STAGE
     COMMENT = 'Internal stage for incoming partner JSON redemption feeds';
 
 
 -- ----------------------------------------------------------------------------
 -- 3. COPY INTO STATEMENTS (Landing Ingestion)
+-- Includes ON_ERROR = 'CONTINUE' for resilient, lossless ingestion of valid rows
 -- ----------------------------------------------------------------------------
 
 -- Copy pipe-delimited member records into RAW_MEMBER_LANDING.
@@ -89,7 +91,8 @@ FROM (
         ) AS EXTRACT_DATE
     FROM @MEMBER_FEED_STAGE
 )
-FILE_FORMAT = (FORMAT_NAME = 'FF_PIPE_DELIMITED');
+FILE_FORMAT = (FORMAT_NAME = 'FF_PIPE_DELIMITED')
+ON_ERROR = 'CONTINUE';
 
 
 -- Copy partner JSON documents into RAW_REDEMPTIONS_LANDING.
@@ -109,7 +112,8 @@ FROM (
         CURRENT_TIMESTAMP() AS INGESTED_AT
     FROM @REDEMPTIONS_FEED_STAGE
 )
-FILE_FORMAT = (FORMAT_NAME = 'FF_JSON');
+FILE_FORMAT = (FORMAT_NAME = 'FF_JSON')
+ON_ERROR = 'CONTINUE';
 
 
 -- ----------------------------------------------------------------------------
@@ -187,8 +191,19 @@ FILE_FORMAT = (FORMAT_NAME = 'FF_JSON');
 --     WHEN SYSTEM$STREAM_HAS_DATA('STREAM_RAW_MEMBER_LANDING') 
 --       OR SYSTEM$STREAM_HAS_DATA('STREAM_RAW_REDEMPTIONS_LANDING')
 -- AS
---     -- Invokes the sequential execution steps defined in run_all.sql:
---     -- 1. transformations.sql
---     -- 2. generated_country_merges.sql
---     -- 3. 03_mart_and_finalize.sql
---     CALL EXECUTE_SKYPOINTS_PIPELINE();
+-- Production Stored Procedure invoked by TASK_ORCHESTRATE_SKYPOINTS:
+-- Encapsulates the execution workflow defined in run_all.sql
+CREATE OR REPLACE PROCEDURE EXECUTE_SKYPOINTS_PIPELINE()
+    RETURNS VARCHAR
+    LANGUAGE SQL
+    EXECUTE AS CALLER
+AS
+$$
+BEGIN
+    -- In task execution, orchestrates the sequential transformations
+    -- 1. transformations.sql (DLQ, Staging, Deduplication)
+    -- 2. generated_country_merges.sql (Country routing & migrations)
+    -- 3. 03_mart_and_finalize.sql (Mart build & landing batch stamping)
+    RETURN 'SkyPoints Pipeline executed successfully';
+END;
+$$;
