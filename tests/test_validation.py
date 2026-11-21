@@ -245,3 +245,45 @@ class TestBatchValidationAndDLQ:
         assert len(result.quarantine_records) == 1
         assert len(result.key_collisions) == 1
         assert "Key collision detected: Member_Id '1' reused across multiple people" in result.key_collisions[0]
+
+    def test_collision_rename_order_independent_favors_latest(self):
+        # Alice gets married and renames from Alice Brown to Alice Green
+        older = RawMemberRecord(
+            member_name="Alice Brown",
+            member_id="M500",
+            enrollment_date="20200101",
+            last_flight_date="20210601",
+            country="USA",
+        )
+        newer = RawMemberRecord(
+            member_name="Alice Green",
+            member_id="M500",
+            enrollment_date="20200101",
+            last_flight_date="20230815",
+            country="USA",
+        )
+
+        # 1. Forward order: older first, newer second
+        res_fwd = validate_member_batch([older, newer])
+        assert len(res_fwd.valid_records) == 1
+        assert res_fwd.valid_records[0].member_name == "Alice Green"
+        assert len(res_fwd.quarantine_records) == 1
+        assert res_fwd.quarantine_records[0].error_reason == "Key collision: superseded by newer record"
+        assert len(res_fwd.key_collisions) == 1
+
+        # 2. Reverse order: newer first, older second -> same outcome!
+        res_rev = validate_member_batch([newer, older])
+        assert len(res_rev.valid_records) == 1
+        assert res_rev.valid_records[0].member_name == "Alice Green"
+        assert len(res_rev.quarantine_records) == 1
+        assert res_rev.quarantine_records[0].error_reason == "Key collision: superseded by newer record"
+        assert len(res_rev.key_collisions) == 1
+
+    def test_identical_duplicates_not_counted_as_collision(self):
+        rec1 = RawMemberRecord(member_name="Bob Smith", member_id="M600", enrollment_date="20200101", country="USA")
+        rec2 = RawMemberRecord(member_name="Bob Smith", member_id="M600", enrollment_date="20200101", country="USA")
+
+        res = validate_member_batch([rec1, rec2])
+        assert len(res.key_collisions) == 0, "Identical duplicate records must not be counted as a collision"
+        assert len(res.quarantine_records) == 0
+        assert len(res.valid_records) == 2

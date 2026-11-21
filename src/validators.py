@@ -212,11 +212,17 @@ def validate_member_record(raw: RawMemberRecord) -> Tuple[Optional[CleanMemberRe
 
 
 def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
-    """Validate a batch of raw records, detecting key collisions and routing errors to DLQ."""
+    """Validate a batch of raw records, detecting key collisions and routing errors to DLQ.
+
+    Order-independent: Groups by (source_system, member_id). If names differ, keeps
+    the record with latest COALESCE(last_flight_date, enrollment_date), quarantining older
+    conflicting records with reason 'Key collision: superseded by newer record'.
+    Identical duplicate rows (same ID and same name) are not considered collisions.
+    """
     result = ValidationResult()
 
-    # Track seen (source_system, member_id) to detect collisions within the same source system
-    seen_members: Dict[Tuple[str, str], str] = {}
+    # 1. First pass: individual validation and grouping valid records
+    groups: Dict[Tuple[str, str], List[Tuple[CleanMemberRecord, RawMemberRecord]]] = {}
 
     for raw in records:
         clean, err = validate_member_record(raw)
@@ -228,23 +234,49 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
                 )
             )
         else:
-            # Key collision check: same (source_system, member_id) but conflicting member name
             key = (clean.source_system, clean.member_id)
-            mname = clean.member_name.lower()
-            if key in seen_members and seen_members[key] != mname:
-                collision_msg = (
-                    f"Key collision detected: Member_Id '{clean.member_id}' reused across multiple people "
-                    f"('{seen_members[key]}' vs '{clean.member_name}') in source {clean.source_system}"
-                )
-                result.key_collisions.append(collision_msg)
-                result.quarantine_records.append(
-                    QuarantineRecord(
-                        raw_data=raw.__dict__,
-                        error_reason=collision_msg,
-                    )
-                )
-            else:
-                seen_members[key] = mname
+            if key not in groups:
+                groups[key] = []
+            groups[key].append((clean, raw))
+
+    # 2. Second pass: evaluate collision and renames per (source_system, member_id)
+    for (src_sys, mid), items in groups.items():
+        distinct_names = {c.member_name.strip().lower() for c, _ in items}
+
+        if len(distinct_names) <= 1:
+            # Same name throughout: identical duplicates or multiple events for same person
+            for clean, _ in items:
                 result.valid_records.append(clean)
+        else:
+            # Names differ: sort by COALESCE(last_flight_date, enrollment_date) DESC
+            items_sorted = sorted(
+                items,
+                key=lambda pair: pair[0].last_flight_date or pair[0].enrollment_date,
+                reverse=True,
+            )
+            winner_clean, _ = items_sorted[0]
+            winner_name_norm = winner_clean.member_name.strip().lower()
+
+            collision_msg = (
+                f"Key collision detected: Member_Id '{mid}' reused across multiple people "
+                f"in source '{src_sys}'. Kept latest '{winner_clean.member_name}'"
+            )
+            result.key_collisions.append(collision_msg)
+
+            # Keep the latest record
+            result.valid_records.append(winner_clean)
+
+            # Quarantine older conflicting records
+            for clean, raw in items_sorted[1:]:
+                if clean.member_name.strip().lower() != winner_name_norm:
+                    result.quarantine_records.append(
+                        QuarantineRecord(
+                            raw_data=raw.__dict__,
+                            error_reason="Key collision: superseded by newer record",
+                        )
+                    )
+                else:
+                    # Same name duplicate of the winning record
+                    result.valid_records.append(clean)
 
     return result
