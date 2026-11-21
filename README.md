@@ -5,7 +5,7 @@
 [![Methodology](https://img.shields.io/badge/methodology-TDD%20%26%20Clean%20Code-orange.svg)]()
 
 > **Incubyte Data Craftsperson Assessment Solution**  
-> Designed and built following Software Craftsmanship, Test-Driven Development (TDD), and scalable engineering practices (Python/DuckDB verified via TDD test suite; Snowflake SQL verified via end-to-end smoke test).
+> Designed and built following Software Craftsmanship, Test-Driven Development (TDD), and scalable engineering practices (Python/DuckDB verified by the pytest suite; Snowflake SQL verified by smoke_test.sql on a Snowflake trial account on <DATE> (results below)).
 
 ---
 
@@ -74,7 +74,7 @@ Production Snowflake DDLs and local DuckDB schemas are implemented in:
   ```sql
   ROW_NUMBER() OVER (
       PARTITION BY source_system, member_id 
-      ORDER BY COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC, source_file_name
+      ORDER BY COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC, stg_row_id
   ) AS rn
   ```
 - Only `rn = 1` survives. If a member moved from India to USA, they are cleanly removed from `table_india` and inserted into `table_usa`.
@@ -146,14 +146,26 @@ To verify the SQL behaviorally against a live Snowflake warehouse (without mock 
 1. Log into your Snowflake account and open a **Worksheet**.
 2. Open [`sql/snowflake/smoke_test.sql`](sql/snowflake/smoke_test.sql) and copy its entire contents into the worksheet.
 3. Click **Run All** (execution takes ~1-2 minutes).
-4. Review the final assertion result table. It validates 9 assertions across 7 distinct test scenarios, returning `PASS` for each:
-   - Member moving country (deleted from old table, inserted into new table).
-   - Composite keys (same ID across different source systems both survive).
-   - Rename collision (older name quarantined in DLQ, newer name kept).
-   - Empty-string tier code (treated as NULL, not rejected).
-   - Unmapped country (quarantined at staging, not silently dropped).
-   - Bad feed_date in redemption (quarantined into DLQ).
-   - Duplicate txn_id replay (idempotent MERGE, miles not doubled).
+4. Review the final assertion result table. It validates 13 assertions across all test scenarios including rerun idempotency, returning `PASS` for each.
+
+#### Smoke Test Results
+> **Verification run**: Trial Snowflake account on `<DATE>`
+
+| Test ID | Scenario | Expected | Actual | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | Member moving country: deleted from old TABLE_USA | 0 | | |
+| 2 | Member moving country: inserted into new TABLE_INDIA | 1 | | |
+| 3 | Composite key: Same ID in IND_SYS and USA_SYS both survive | 2 | | |
+| 4 | Rename collision: older name quarantined in DLQ | 1 | | |
+| 5 | Rename collision: newer name kept in target table | Alice Green | | |
+| 6 | Empty-string tier code: treated as null, not quarantined | 1 | | |
+| 7 | Unmapped country: quarantined in DLQ at staging | 1 | | |
+| 8 | Null country: quarantined in DLQ at staging | 1 | | |
+| 9 | Bad redemption feed_date: quarantined into DLQ | 1 | | |
+| 10 | Duplicate txn_id replay: idempotent merge (miles not doubled) | 5000 | | |
+| 11 | Ambiguous member_id redemption: quarantined into DLQ | 1 | | |
+| 12 | Rerun idempotency: STG_MEMBER_PROFILE count unchanged on rerun | 6 | | |
+| 13 | Rerun idempotency: RAW_DLQ_QUARANTINE count unchanged on rerun | 5 | | |
 
 > [!NOTE]
 > Automated pytest tests verify SQL contract and syntax structure locally. True behavioral verification (merges, deletes, deduplication, quarantine) is performed directly on a Snowflake warehouse via `sql/snowflake/smoke_test.sql`.
@@ -192,6 +204,12 @@ Outputs live formatted tables showing ingestion metrics, DLQ quarantine items, c
 8. **DuckDB as a Local Stand-in for Billion-Row Snowflake Design**:
    - For local development, testing, and CI/CD demonstration, DuckDB is utilized as an in-memory embedded OLAP engine.
    - In production for billions of records, the architecture maps to Snowflake Snowpipe auto-ingest, micro-partition clustering on `(MEMBER_ID, LAST_UPDATED_AT)`, and scheduled Snowflake Tasks or dbt models executing the transformation SQL.
+9. **Dual Python and SQL Implementations**:
+   - Python and SQL are separate implementations of the same business logic, not a single engine; business logic changes must be kept in sync across both manually.
+10. **DuckDB Local Stand-In vs Snowflake SQL Dialect**:
+    - The local pytest suite runs against DuckDB as an in-memory stand-in; dialect differences (e.g. Snowflake's `LATERAL FLATTEN` vs DuckDB's `unnest`, session variable syntax, and `!source` directives) mean the Snowflake SQL is not covered by pytest beyond structural syntax and contract tests. Full behavioral validation requires executing `sql/snowflake/smoke_test.sql` against a live Snowflake account.
+11. **Tie-Breaking with Random UUID (`STG_ROW_ID`)**:
+    - The Snowflake SQL uses `STG_ROW_ID` (a random UUID generated via `UUID_STRING()` at staging insert) as the final tie-breaker after dates and timestamps. This guarantees deterministic selection within a single pipeline run, but two runs over the same input data with identical timestamps could choose different winners if staging is completely reloaded from scratch.
 
 ---
 
