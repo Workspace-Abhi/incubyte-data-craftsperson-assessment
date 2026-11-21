@@ -357,10 +357,10 @@ WHERE RN = 1;
 -- NOTE: To eliminate Snowflake Scripting syntax risks and dynamic IDENTIFIER(:1) execution,
 -- static MERGE and DELETE statements for all country tables are generated directly from
 -- CANONICAL_TABLE_MAP in src/country_router.py into:
---   sql/snowflake/generated_country_merges.sql
+--   sql/snowflake/04_country_merges.generated.sql
 --
 -- In SnowSQL CLI, execute:
--- !source sql/snowflake/generated_country_merges.sql
+-- !source sql/snowflake/04_country_merges.generated.sql
 -- ----------------------------------------------------------------------------
 
 -- ----------------------------------------------------------------------------

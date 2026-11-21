@@ -291,7 +291,7 @@ class TestBatchValidationAndDLQ:
     def test_sample_flat_file_triggers_both_data_quality_warnings(self):
         from pathlib import Path
         from src.flat_file_reader import read_pipe_delimited_file
-        data_path = Path(__file__).parent.parent / "data" / "sample_member_profile.dat"
+        data_path = Path(__file__).resolve().parent.parent.parent / "data" / "samples" / "sample_member_profile.dat"
         raw_records = read_pipe_delimited_file(str(data_path))
         result = validate_member_batch(raw_records)
 

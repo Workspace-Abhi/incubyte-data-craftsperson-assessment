@@ -6,12 +6,18 @@ Single source of truth: CANONICAL_TABLE_MAP / CANONICAL_SNOWFLAKE_TABLE_MAP in s
 import sys
 from pathlib import Path
 
-# Add project root to sys.path
+# Add project root and src to sys.path
 root_dir = Path(__file__).resolve().parent.parent
+src_dir = root_dir / "src"
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
-from src.country_router import CANONICAL_TABLE_MAP, CANONICAL_SNOWFLAKE_TABLE_MAP
+try:
+    from skypoints.transform.country_router import CANONICAL_TABLE_MAP, CANONICAL_SNOWFLAKE_TABLE_MAP
+except ImportError:
+    from src.skypoints.transform.country_router import CANONICAL_TABLE_MAP, CANONICAL_SNOWFLAKE_TABLE_MAP
 
 
 def generate_sql() -> str:
@@ -191,7 +197,7 @@ def generate_sql() -> str:
 
 def main():
     root_dir = Path(__file__).resolve().parent.parent
-    output_file = root_dir / "sql" / "snowflake" / "generated_country_merges.sql"
+    output_file = root_dir / "sql" / "snowflake" / "04_country_merges.generated.sql"
     sql_content = generate_sql()
     output_file.write_text(sql_content, encoding="utf-8")
     print(f"Generated static country merges in: {output_file}")
