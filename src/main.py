@@ -58,16 +58,17 @@ def main():
     print(f"Data Directory: {data_dir}")
     print(f"Ingesting Flat File: {flat_file.name}")
     print(f"Ingesting Partner JSON: {json_file.name}")
-    print("Ingesting Legacy Country CSVs: IND.csv, USA.csv, AUS.csv")
+    print("Ingesting Legacy Country CSVs (namespaced to prevent cross-file collision): IND.csv, USA.csv, AUS.csv")
 
     pipeline = SkyPointsPipeline()
-    # Use fixed reference date matching assessment data timeframe
+    # Fixed reference date matching assessment data timeframe
     ref_date = date(2024, 1, 15)
     result = pipeline.run(
         flat_file_path=str(flat_file) if flat_file.exists() else None,
         json_file_path=str(json_file) if json_file.exists() else None,
         csv_file_mappings={p: c for p, c in csv_mappings.items() if Path(p).exists()},
         reference_date=ref_date,
+        namespace_csv_ids=True,
     )
 
     print_section("1. INGESTION & DATA QUALITY VALIDATION METRICS")
@@ -75,6 +76,7 @@ def main():
     print(f"  Total Raw Records Ingested : {m.total_raw_records}")
     print(f"  Valid Staged Records       : {m.valid_records_count}")
     print(f"  Quarantined (DLQ) Records  : {m.quarantined_records_count}")
+    print(f"  Key Collisions Detected    : {m.key_collisions_count}")
 
     if result.quarantined_records:
         print("\n  [Dead Letter Queue Samples (Quarantined)]")
@@ -98,10 +100,10 @@ def main():
         ["member_id", "member_name", "country", "tier_code", "age", "stale_member", "last_flight_date"],
     )
 
-    print_section("5. MEMBER LOYALTY 360 MART (PROFILE + REDEMPTIONS JOIN)")
+    print_section("5. MEMBER LOYALTY 360 MART (COMPLETED VS PENDING MILES)")
     format_table(
         result.loyalty_360_data,
-        ["member_id", "member_name", "country", "tier_code", "age", "stale_member", "total_redemptions", "total_miles_redeemed", "top_partner"],
+        ["member_id", "member_name", "country", "tier_code", "age", "stale_member", "total_redemptions", "total_miles_redeemed", "pending_miles_redeemed", "top_partner"],
     )
 
     print("\n" + "=" * 80)
