@@ -10,6 +10,7 @@
 
 -- 1. Flag and idempotently quarantine ambiguous redemptions whose MEMBER_ID spans multiple SOURCE_SYSTEMs
 -- History is preserved non-destructively by setting IS_AMBIGUOUS flag rather than deleting.
+-- Scoped update: touches only incoming batch redemptions, touched member profiles, or rows whose ambiguity status flipped
 UPDATE STG_REDEMPTIONS_FLATTENED r
 SET IS_AMBIGUOUS = CASE
     WHEN r.MEMBER_ID IN (
@@ -19,7 +20,21 @@ SET IS_AMBIGUOUS = CASE
         HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
     ) THEN TRUE
     ELSE FALSE
-END;
+END
+WHERE (r.BATCH_ID = $run_batch_id)
+   OR (r.MEMBER_ID IN (SELECT DISTINCT MEMBER_ID FROM DEDUPED_LATEST_MEMBERS))
+   OR (r.IS_AMBIGUOUS = TRUE AND r.MEMBER_ID NOT IN (
+        SELECT MEMBER_ID
+        FROM MEMBERS_ALL_CURRENT
+        GROUP BY MEMBER_ID
+        HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
+   ))
+   OR (r.IS_AMBIGUOUS = FALSE AND r.MEMBER_ID IN (
+        SELECT MEMBER_ID
+        FROM MEMBERS_ALL_CURRENT
+        GROUP BY MEMBER_ID
+        HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
+   ));
 
 MERGE INTO RAW_DLQ_QUARANTINE target
 USING (
@@ -44,7 +59,8 @@ WHEN NOT MATCHED THEN
     VALUES (src.RECORD_ID, src.RAW_RECORD, src.RAW_RECORD_HASH, src.ERROR_REASON, src.SOURCE_FEED, src.SOURCE_SYSTEM, src.SOURCE_FILE_NAME, src.BATCH_ID, CURRENT_TIMESTAMP());
 
 -- 2. Build or Refresh MEMBER_LOYALTY_360 Mart (Idempotent MERGE for affected members)
--- Keyed on (SOURCE_SYSTEM, MEMBER_ID) from MEMBERS_ALL_CURRENT; touches only members affected by this batch.
+-- Keyed on (SOURCE_SYSTEM, MEMBER_ID) from MEMBERS_ALL_CURRENT; touches only members affected by this batch,
+-- including members whose redemptions were previously ambiguous and are now resolved.
 -- Excludes IS_AMBIGUOUS = TRUE transactions from analytical calculations.
 -- Breaks MODE(PARTNER) ties deterministically by highest count then alphabetical.
 MERGE INTO MEMBER_LOYALTY_360 target
@@ -57,6 +73,15 @@ USING (
         FROM STG_REDEMPTIONS_FLATTENED red
         JOIN MEMBERS_ALL_CURRENT m ON red.MEMBER_ID = m.MEMBER_ID
         WHERE red.BATCH_ID = $run_batch_id
+        UNION
+        -- Members whose redemptions flipped between ambiguous and unambiguous
+        SELECT m.SOURCE_SYSTEM, red.MEMBER_ID
+        FROM STG_REDEMPTIONS_FLATTENED red
+        JOIN MEMBERS_ALL_CURRENT m ON red.MEMBER_ID = m.MEMBER_ID
+        WHERE red.IS_AMBIGUOUS = FALSE
+          AND red.MEMBER_ID IN (
+              SELECT RECORD_ID FROM RAW_DLQ_QUARANTINE WHERE ERROR_REASON = 'Ambiguous member_id across source systems'
+          )
     ),
     PartnerCounts AS (
         SELECT
@@ -139,11 +164,12 @@ WHEN NOT MATCHED THEN
 
 -- ----------------------------------------------------------------------------
 -- STEP 6: Mark Processed Records in Landing Tables for Batch Tracking
+-- Stamps ONLY the records claimed and processed by this specific batch
 -- ----------------------------------------------------------------------------
 UPDATE RAW_MEMBER_LANDING
-SET PROCESSED_AT = CURRENT_TIMESTAMP(), BATCH_ID = $run_batch_id
-WHERE PROCESSED_AT IS NULL;
+SET PROCESSED_AT = CURRENT_TIMESTAMP()
+WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;
 
 UPDATE RAW_REDEMPTIONS_LANDING
-SET PROCESSED_AT = CURRENT_TIMESTAMP(), BATCH_ID = $run_batch_id
-WHERE PROCESSED_AT IS NULL;
+SET PROCESSED_AT = CURRENT_TIMESTAMP()
+WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;

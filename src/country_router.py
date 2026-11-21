@@ -47,17 +47,7 @@ def normalize_country(country: Optional[str]) -> Optional[str]:
 class CountryRouter:
     """Manages country-specific target tables with 'latest record wins' deduplication."""
 
-    COUNTRY_TABLE_MAP = {
-        "IND": "table_india",
-        "INDIA": "table_india",
-        "USA": "table_usa",
-        "CAN": "table_canada",
-        "CANADA": "table_canada",
-        "PHIL": "table_philippines",
-        "PH": "table_philippines",
-        "AU": "table_australia",
-        "AUS": "table_australia",
-    }
+    COUNTRY_TABLE_MAP = {k: CANONICAL_TABLE_MAP[v] for k, v in CANONICAL_COUNTRY_MAP.items()}
 
     def __init__(self, conn: Optional[duckdb.DuckDBPyConnection] = None):
         self.conn = conn or duckdb.connect(":memory:")
@@ -131,13 +121,13 @@ class CountryRouter:
         country_counts: Dict[str, int] = {}
 
         # View of all current records across country tables to prevent older late-arriving records from inserting
-        union_sql = " UNION ALL ".join([f"SELECT source_system, member_id, extract_date, last_flight_date, enrollment_date FROM {t}" for t in CANONICAL_TABLE_MAP.values()])
+        union_sql = " UNION ALL ".join([f"SELECT source_system, member_id, country, extract_date, last_flight_date, enrollment_date, line_no FROM {t}" for t in CANONICAL_TABLE_MAP.values()])
         self.conn.execute(f"CREATE OR REPLACE TEMP VIEW tmp_all_country_members AS {union_sql};")
 
         for (country_val,) in countries_df:
             target_table = self.get_table_name_for_country(country_val)
 
-            # Delete existing row in target_table ONLY if incoming record is newer by P4 order
+            # Delete existing row in target_table ONLY if incoming record is newer by P4 order or tie
             self.conn.execute(f"""
                 DELETE FROM {target_table} target
                 WHERE EXISTS (
@@ -151,12 +141,17 @@ class CountryRouter:
                               COALESCE(src.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
                               AND COALESCE(src.last_flight_date, src.enrollment_date) > COALESCE(target.last_flight_date, target.enrollment_date)
                           )
+                          OR (
+                              COALESCE(src.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
+                              AND COALESCE(src.last_flight_date, src.enrollment_date) = COALESCE(target.last_flight_date, target.enrollment_date)
+                              AND COALESCE(src.line_no, 0) >= COALESCE(target.line_no, 0)
+                          )
                           OR target.extract_date IS NULL
                       )
                 );
             """, [country_val])
 
-            # Insert incoming record if it does not already exist in any country table with a newer date
+            # Insert incoming record if it does not already exist in any country table with a newer date or higher line_no tie
             self.conn.execute(f"""
                 INSERT INTO {target_table} (
                     source_system, member_id, member_name, enrollment_date, last_flight_date,
@@ -177,7 +172,13 @@ class CountryRouter:
                             COALESCE(existing.extract_date, DATE '1970-01-01') > COALESCE(src.extract_date, DATE '1970-01-01')
                             OR (
                                 COALESCE(existing.extract_date, DATE '1970-01-01') = COALESCE(src.extract_date, DATE '1970-01-01')
-                                AND COALESCE(existing.last_flight_date, existing.enrollment_date) >= COALESCE(src.last_flight_date, src.enrollment_date)
+                                AND COALESCE(existing.last_flight_date, existing.enrollment_date) > COALESCE(src.last_flight_date, src.enrollment_date)
+                            )
+                            OR (
+                                COALESCE(existing.extract_date, DATE '1970-01-01') = COALESCE(src.extract_date, DATE '1970-01-01')
+                                AND COALESCE(existing.last_flight_date, existing.enrollment_date) = COALESCE(src.last_flight_date, src.enrollment_date)
+                                AND COALESCE(existing.line_no, 0) >= COALESCE(src.line_no, 0)
+                                AND existing.country <> src.country
                             )
                         )
                   );
@@ -186,7 +187,7 @@ class CountryRouter:
             inserted_count = self.conn.execute(f"SELECT COUNT(*) FROM {target_table}").fetchone()[0]
             country_counts[target_table] = inserted_count
 
-        # 4. Clean up migration: remove members from other country tables only if incoming record has a different country AND is newer
+        # 4. Clean up migration: remove members from other country tables only if incoming record has a different country AND is newer or equal on tie
         all_canonical_tables = list(set(CANONICAL_TABLE_MAP.values()))
         for tbl in all_canonical_tables:
             self.conn.execute(f"""
@@ -208,6 +209,11 @@ class CountryRouter:
                           OR (
                               COALESCE(d.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
                               AND COALESCE(d.last_flight_date, d.enrollment_date) > COALESCE(target.last_flight_date, target.enrollment_date)
+                          )
+                          OR (
+                              COALESCE(d.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
+                              AND COALESCE(d.last_flight_date, d.enrollment_date) = COALESCE(target.last_flight_date, target.enrollment_date)
+                              AND COALESCE(d.line_no, 0) >= COALESCE(target.line_no, 0)
                           )
                           OR target.extract_date IS NULL
                       )

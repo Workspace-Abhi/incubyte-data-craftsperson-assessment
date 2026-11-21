@@ -75,10 +75,12 @@ def test_snowflake_smoke_test_coverage():
     assert "Rename across two batches: newest name wins in target table" in content
     assert "Ambiguity round trip: redemptions return to mart when ambiguity disappears" in content
 
-    # SQL correctness scenarios (P5)
+    # SQL correctness scenarios (P5 & P6)
     assert "Invalid DOB: quarantined into DLQ" in content
     assert "Non-numeric miles: quarantined into DLQ without abort" in content
     assert "POST_CODE present in country target table" in content
+    assert "Out-of-order older record audited in DLQ as superseded" in content
+    assert "In-flight landing record processed successfully on subsequent run" in content
 
     # Final assertion status reporting
     assert "scenario," in content
@@ -154,6 +156,10 @@ def test_snowflake_ddl_ref_country_map():
     # P6: Dynamic query-time recomputed view MEMBERS_ALL_CURRENT
     assert "CREATE OR REPLACE VIEW MEMBERS_ALL_CURRENT AS" in content
 
+    # Schema evolution & idempotent upgrades for existing schemas
+    assert "ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS" in content
+    assert "ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS POST_CODE" in content
+
 
 def test_snowflake_transformations_and_merge():
     sql_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "transformations.sql"
@@ -165,13 +171,16 @@ def test_snowflake_transformations_and_merge():
     assert "generated_country_merges.sql" in content
     assert "!source sql/snowflake/generated_country_merges.sql" in content
 
-    # Batch tracking & landing filters (P6: incremental per-batch staging truncate)
+    # Batch tracking & landing filters (P1 & P6: incremental claiming & finalization)
     assert "SET run_batch_id = UUID_STRING();" in content
     assert "TRUNCATE TABLE STG_MEMBER_PROFILE;" in content
     assert "WHERE PROCESSED_AT IS NULL" in content
+    assert "UPDATE RAW_MEMBER_LANDING" in content
+    assert "SET BATCH_ID = $run_batch_id" in content
     assert "UPDATE RAW_MEMBER_LANDING" in finalize_content
     assert "UPDATE RAW_REDEMPTIONS_LANDING" in finalize_content
-    assert "SET PROCESSED_AT = CURRENT_TIMESTAMP(), BATCH_ID = $run_batch_id" in finalize_content
+    assert "SET PROCESSED_AT = CURRENT_TIMESTAMP()" in finalize_content
+    assert "WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL" in finalize_content
 
     # Task 1 & 2: SOURCE_SYSTEM composite dedup and member loyalty mart
     assert "PARTITION BY SOURCE_SYSTEM, MEMBER_ID" in content
@@ -193,12 +202,13 @@ def test_snowflake_transformations_and_merge():
     assert "Invalid Last_Flight_Date: unparseable calendar date" in content
     assert "Invalid DOB: unparseable calendar date" in content
 
-    # Key collisions resolution before dedupe & deterministic tie-breaking (P4 recency key)
+    # Key collisions resolution before dedupe & deterministic tie-breaking (P2 & P4 deterministic ranking)
     assert "Key collision: superseded by newer record" in content
     assert "CurrentBatchMembers AS" in content
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
-    assert "ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.LINE_NO DESC" in content
-    assert "ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, LINE_NO DESC" in content
+    assert "ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.LINE_NO DESC" in content
+    assert "ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, LINE_NO DESC" in content
+    assert "Superseded by existing newer record in core table" in content
     assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in content
     assert "DELETE FROM STG_MEMBER_PROFILE" not in content
 
@@ -274,3 +284,6 @@ def test_snowflake_ingestion_ddl_and_metadata():
     assert "AUTO_INGEST" in content
     assert "TASK" in content
     assert "STREAM" in content
+    assert "CREATE STAGE IF NOT EXISTS" in content
+    assert "ON_ERROR = 'CONTINUE'" in content
+    assert "CREATE OR REPLACE PROCEDURE EXECUTE_SKYPOINTS_PIPELINE" in content
