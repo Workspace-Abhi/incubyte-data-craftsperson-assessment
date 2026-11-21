@@ -29,6 +29,14 @@ def test_snowflake_ddl_ref_country_map():
     assert "'IND' AS canonical" in content
     assert "'AUS', 'AU', 'TABLE_AU'" in content
 
+    # Task 4: MEMBERS_ALL unified country view
+    assert "CREATE OR REPLACE VIEW MEMBERS_ALL AS" in content
+    assert "SELECT * FROM TABLE_INDIA" in content
+    assert "SELECT * FROM TABLE_USA" in content
+    assert "SELECT * FROM TABLE_CAN" in content
+    assert "SELECT * FROM TABLE_PHIL" in content
+    assert "SELECT * FROM TABLE_AU" in content
+
 
 def test_snowflake_transformations_and_merge():
     sql_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "transformations.sql"
@@ -67,6 +75,12 @@ def test_snowflake_transformations_and_merge():
     assert "Invalid miles_redeemed: value cannot be negative" in content
     assert "MERGE INTO STG_REDEMPTIONS_FLATTENED" in content
     assert "target.TXN_ID = src.TXN_ID" in content
+
+    # Task 4: Idempotent MERGE into MEMBER_LOYALTY_360 from MEMBERS_ALL for affected members
+    assert "MERGE INTO MEMBER_LOYALTY_360 target" in content
+    assert "FROM MEMBERS_ALL m" in content
+    assert "WHERE EXISTS" in content.split("STEP 5")[1]
+    assert "CREATE OR REPLACE TABLE MEMBER_LOYALTY_360" not in content
 
 
 def test_generated_country_merges_matches_script_output():

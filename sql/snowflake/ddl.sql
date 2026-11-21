@@ -197,6 +197,20 @@ WHEN NOT MATCHED THEN
     INSERT (COUNTRY_CODE, CANONICAL_CODE, TARGET_TABLE) VALUES (src.code, src.canonical, src.tbl);
 
 -- ----------------------------------------------------------------------------
+-- 4B. UNIFIED COUNTRY MEMBERS VIEW
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL AS
+SELECT * FROM TABLE_INDIA
+UNION ALL
+SELECT * FROM TABLE_USA
+UNION ALL
+SELECT * FROM TABLE_CAN
+UNION ALL
+SELECT * FROM TABLE_PHIL
+UNION ALL
+SELECT * FROM TABLE_AU;
+
+-- ----------------------------------------------------------------------------
 -- 5. SEMI-STRUCTURED REDEMPTION TABLES
 -- ----------------------------------------------------------------------------
 

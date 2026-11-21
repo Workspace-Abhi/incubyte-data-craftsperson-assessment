@@ -171,7 +171,12 @@ class TestRedemptionParser:
         redemptions, _ = parser.parse_payload(payload)
         parser.load_redemptions(redemptions)
 
-        # Building the mart should detect ambiguity and quarantine the redemption
+        # Quarantining ambiguous redemptions is now explicit before mart aggregation
+        ambig = parser.quarantine_ambiguous_redemptions("tmp_latest_members")
+        assert len(ambig) == 1
+        assert ambig[0].raw_data["txn_id"] == "TXN_AMBIG_1"
+
+        # Building the mart has no side effects and reflects the cleaned state
         mart = parser.build_loyalty_360_mart("tmp_latest_members")
         assert len(mart) == 2
 
@@ -184,3 +189,126 @@ class TestRedemptionParser:
         ambig_q = [q for q in parser.quarantined_redemptions if q.error_reason == "Ambiguous member_id across source systems"]
         assert len(ambig_q) == 1
         assert ambig_q[0].raw_data["txn_id"] == "TXN_AMBIG_1"
+
+    def test_mart_builds_from_country_tables_preserving_historical_members(self):
+        conn = duckdb.connect(":memory:")
+        parser = RedemptionParser(conn)
+
+        # Insert historical member directly into country target table (not in today's flat file batch)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS table_india (
+                source_system VARCHAR NOT NULL,
+                member_id VARCHAR NOT NULL,
+                member_name VARCHAR NOT NULL,
+                enrollment_date DATE NOT NULL,
+                last_flight_date DATE,
+                tier_code VARCHAR,
+                agent_name VARCHAR,
+                state VARCHAR,
+                country VARCHAR,
+                post_code INTEGER,
+                dob DATE,
+                is_active VARCHAR DEFAULT 'A',
+                age INTEGER,
+                stale_member VARCHAR(1),
+                last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source_system, member_id)
+            );
+            INSERT INTO table_india (
+                source_system, member_id, member_name, enrollment_date, last_flight_date,
+                tier_code, agent_name, state, country, dob, is_active, age, stale_member
+            ) VALUES (
+                'HIST_IND', 'HIST_001', 'Arjun', DATE '2021-01-01', DATE '2023-05-10',
+                'GLD', 'Agent01', 'MH', 'IND', DATE '1992-04-12', 'A', 33, 'N'
+            );
+        """)
+
+        # Process new redemption for this historical member
+        payload = {
+            "feed_date": "20240115",
+            "member_id": "HIST_001",
+            "redemptions": [
+                {
+                    "txn_id": "HIST_TXN_1",
+                    "txn_date": "20240110",
+                    "partner": "SkyPoints",
+                    "miles_redeemed": 7500,
+                    "status": "COMPLETED",
+                }
+            ],
+        }
+        redemptions, _ = parser.parse_payload(payload)
+        parser.load_redemptions(redemptions)
+
+        # Build mart without specifying source table (defaults to union of country tables)
+        mart = parser.build_loyalty_360_mart()
+        assert len(mart) == 1
+        arjun = mart[0]
+        assert arjun["member_id"] == "HIST_001"
+        assert arjun["member_name"] == "Arjun"
+        assert arjun["total_redemptions"] == 1
+        assert arjun["total_miles_redeemed"] == 7500
+        assert arjun["top_partner"] == "SkyPoints"
+
+    def test_build_loyalty_360_mart_has_no_side_effects_on_repeated_runs(self):
+        conn = duckdb.connect(":memory:")
+        parser = RedemptionParser(conn)
+
+        # Seed country table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS table_usa (
+                source_system VARCHAR NOT NULL,
+                member_id VARCHAR NOT NULL,
+                member_name VARCHAR NOT NULL,
+                enrollment_date DATE NOT NULL,
+                last_flight_date DATE,
+                tier_code VARCHAR,
+                agent_name VARCHAR,
+                state VARCHAR,
+                country VARCHAR,
+                post_code INTEGER,
+                dob DATE,
+                is_active VARCHAR DEFAULT 'A',
+                age INTEGER,
+                stale_member VARCHAR(1),
+                last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source_system, member_id)
+            );
+            INSERT INTO table_usa (
+                source_system, member_id, member_name, enrollment_date, last_flight_date,
+                tier_code, agent_name, state, country, dob, is_active, age, stale_member
+            ) VALUES (
+                'FLAT_FILE', 'USA_001', 'John', DATE '2022-01-01', DATE '2023-01-01',
+                'PLT', 'AgentUS', 'NY', 'USA', DATE '1988-06-15', 'A', 36, 'N'
+            );
+        """)
+
+        payload = {
+            "feed_date": "20240115",
+            "member_id": "USA_001",
+            "redemptions": [
+                {
+                    "txn_id": "USA_TXN_1",
+                    "txn_date": "20240112",
+                    "partner": "Delta",
+                    "miles_redeemed": 4000,
+                    "status": "COMPLETED",
+                }
+            ],
+        }
+        redemptions, _ = parser.parse_payload(payload)
+        parser.load_redemptions(redemptions)
+
+        q_count_before = len(parser.quarantined_redemptions)
+
+        # Run 1
+        mart1 = parser.build_loyalty_360_mart()
+        q_count_after1 = len(parser.quarantined_redemptions)
+
+        # Run 2
+        mart2 = parser.build_loyalty_360_mart()
+        q_count_after2 = len(parser.quarantined_redemptions)
+
+        assert q_count_before == q_count_after1 == q_count_after2 == 0
+        assert len(mart1) == len(mart2) == 1
+        assert mart1[0]["total_miles_redeemed"] == mart2[0]["total_miles_redeemed"] == 4000
