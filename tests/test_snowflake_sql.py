@@ -75,10 +75,12 @@ def test_snowflake_smoke_test_coverage():
     assert "Rename across two batches: newest name wins in target table" in content
     assert "Ambiguity round trip: redemptions return to mart when ambiguity disappears" in content
 
-    # SQL correctness scenarios (P5)
+    # SQL correctness scenarios (P5 & P6)
     assert "Invalid DOB: quarantined into DLQ" in content
     assert "Non-numeric miles: quarantined into DLQ without abort" in content
     assert "POST_CODE present in country target table" in content
+    assert "Out-of-order older record audited in DLQ as superseded" in content
+    assert "In-flight landing record processed successfully on subsequent run" in content
 
     # Final assertion status reporting
     assert "scenario," in content

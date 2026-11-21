@@ -149,7 +149,8 @@ INSERT INTO RAW_MEMBER_LANDING (
     TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
 ) VALUES
 ('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat'),
-('D', 'FLAT_FILE', 'BATCH_REN_1', 'Updated Name', '20200101', '20230601', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat');
+('D', 'FLAT_FILE', 'BATCH_REN_1', 'Updated Name', '20200101', '20230601', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat'),
+('D', 'FLAT_FILE', 'MOVE_101', 'David Miller Older', '20200101', '20210101', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'batch_old_20200101.dat');
 
 -- Resolve ambiguity for RESOLVE_101 before Batch 2 execution
 DELETE FROM STG_MEMBER_PROFILE WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_101';
@@ -157,6 +158,13 @@ DELETE FROM TABLE_USA WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_1
 
 -- Step 4C: Run production pipeline for Batch 2 via run_all.sql (Run 2: Processes Batch 2)
 !source sql/snowflake/run_all.sql
+
+-- Step 5A: Simulate in-flight arrival landing after Batch 2 but before rerun (BATCH_ID IS NULL)
+INSERT INTO RAW_MEMBER_LANDING (
+    RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
+) VALUES
+('D', 'FLAT_FILE', 'INFLIGHT_1', 'Inflight User', '20240101', '20240101', 'GLD', 'AgentN', 'CA', 'USA', '01011990', 'A', '90210', 'inflight_arrival.dat');
 
 -- Step 5: Capture snapshot of mart and table counts BEFORE rerun into temporary table
 CREATE OR REPLACE TEMPORARY TABLE PRE_RERUN_SNAPSHOT AS
@@ -169,9 +177,7 @@ SELECT
     (SELECT TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_COMPLETED_MILES,
     (SELECT TO_VARCHAR(COALESCE(PENDING_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_PENDING_MILES;
 
--- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 3: Rerun adds no new rows)
--- All landing rows have been stamped with PROCESSED_AT, so a rerun processes 0 new rows
--- and does not duplicate staging, DLQ, or mart records.
+-- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 3: Claims and processes in-flight record)
 !source sql/snowflake/run_all.sql
 
 -- Step 6: Single evaluation query returning scenario, expected, actual, PASS/FAIL
@@ -467,6 +473,29 @@ WITH AssertionResults AS (
         TO_VARCHAR(COALESCE(MAX(POST_CODE), 0)) AS actual
     FROM TABLE_INDIA
     WHERE MEMBER_ID = 'MOVE_101'
+
+    UNION ALL
+
+    -- Scenario 17: Out-of-order older record audited in DLQ as superseded
+    SELECT
+        28 AS test_id,
+        'Out-of-order older record audited in DLQ as superseded' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'MOVE_101'
+      AND ERROR_REASON = 'Superseded by existing newer record in core table'
+
+    UNION ALL
+
+    -- Scenario 18: In-flight landing record claimed and processed on subsequent run
+    SELECT
+        29 AS test_id,
+        'In-flight landing record processed successfully on subsequent run' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM TABLE_USA
+    WHERE MEMBER_ID = 'INFLIGHT_1'
 )
 SELECT
     scenario,
