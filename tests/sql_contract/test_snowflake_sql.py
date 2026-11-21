@@ -86,7 +86,7 @@ def test_snowflake_smoke_test_coverage():
     assert "Interrupted batch: unprocessed landing record with old batch ID is re-claimed and processed" in content
     assert "Same-day correction with equal line numbers: deleted from old TABLE_USA" in content
     assert "Same-day correction with equal line numbers: inserted into new TABLE_INDIA" in content
-    assert "Same-country tie with lower line number: existing higher line number record preserved" in content
+    assert "Same-day correction in earlier-sorting file name wins on time and later load wins on tie" in content
 
     # Final assertion status reporting
     assert "scenario," in content
@@ -138,8 +138,18 @@ def test_snowflake_ddl_ref_country_map():
     assert "BATCH_ID             VARCHAR(50)" in content
     assert "PROCESSED_AT         TIMESTAMP_NTZ" in content
     assert "STG_ROW_ID          VARCHAR          DEFAULT UUID_STRING()" in content
-    assert "EXTRACT_DATE         DATE" in content
+    assert "EXTRACT_TS           TIMESTAMP_NTZ" in content
     assert "LINE_NO              NUMBER" in content
+
+    # P-L: Schema evolution ALTER TABLE statements appear strictly BEFORE views
+    pos_first_alter = content.find("ALTER TABLE RAW_MEMBER_LANDING")
+    pos_first_view = content.find("CREATE OR REPLACE VIEW MEMBERS_ALL")
+    assert pos_first_alter != -1, "ALTER TABLE evolution block must exist"
+    assert pos_first_view != -1, "MEMBERS_ALL view must exist"
+    assert pos_first_alter < pos_first_view, (
+        f"Schema evolution ALTER TABLE statements (pos {pos_first_alter}) must precede "
+        f"view creation (pos {pos_first_view}) so pre-existing schemas upgrade before views compile"
+    )
 
     # DLQ columns in DDL (P2)
     assert "RAW_RECORD_HASH      VARCHAR(64)" in content
@@ -212,9 +222,9 @@ def test_snowflake_transformations_and_merge():
     assert "Key collision: superseded by newer record" in content
     assert "CurrentBatchMembers AS" in content
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
-    assert "ORDER BY s.EXTRACT_DATE DESC," in content
+    assert "ORDER BY s.EXTRACT_TS DESC," in content
     assert "COALESCE(s.SOURCE_FILE_NAME, '') DESC," in content
-    assert "ORDER BY EXTRACT_DATE DESC," in content
+    assert "ORDER BY EXTRACT_TS DESC," in content
     assert "COALESCE(SOURCE_FILE_NAME, '') DESC," in content
     assert "Superseded by existing newer record in core table" in content
     assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in content
@@ -267,8 +277,8 @@ def test_generated_country_merges_matches_script_output():
     assert "target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID" in actual
     assert "target.POST_CODE = src.POST_CODE" in actual
     assert "WHEN MATCHED AND (" in actual
-    assert "src.EXTRACT_DATE > target.EXTRACT_DATE" in actual
-    assert "d.EXTRACT_DATE > target.EXTRACT_DATE" in actual
+    assert "src.EXTRACT_TS > target.EXTRACT_TS" in actual
+    assert "d.EXTRACT_TS > target.EXTRACT_TS" in actual
     assert "SELECT *" not in actual
     assert "d.SOURCE_SYSTEM = target.SOURCE_SYSTEM" in actual
     assert "d.COUNTRY <> 'IND'" in actual

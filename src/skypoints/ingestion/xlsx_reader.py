@@ -5,10 +5,10 @@ import openpyxl
 
 try:
     from skypoints.models import RawMemberRecord
-    from skypoints.ingestion.flat_file import extract_date_from_file_path
+    from skypoints.ingestion.flat_file import extract_ts_from_file_path
 except ImportError:
     from src.skypoints.models import RawMemberRecord
-    from src.skypoints.ingestion.flat_file import extract_date_from_file_path
+    from src.skypoints.ingestion.flat_file import extract_ts_from_file_path
 
 FilePath = Union[str, Path]
 
@@ -26,7 +26,7 @@ def read_xlsx_file(
 
     hint = date_format_hint
     src_system = path.stem.upper() if path.stem else "XLSX"
-    file_extract_date = extract_date_from_file_path(path)
+    file_extract_ts = extract_ts_from_file_path(path)
 
     wb = openpyxl.load_workbook(path, data_only=True)
     sheet = wb.active
@@ -67,7 +67,7 @@ def read_xlsx_file(
                 source_file=path.name,
                 source_system=src_system,
                 date_format_hint=hint,
-                extract_date=file_extract_date,
+                extract_ts=file_extract_ts,
                 line_no=line_no,
             )
         )

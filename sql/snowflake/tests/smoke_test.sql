@@ -32,10 +32,10 @@ USE SCHEMA SKYPOINTS_SMOKE_TEST;
 -- Seeded with higher flight date (2023-08-01) but older extract date (2023-01-01).
 INSERT INTO TABLE_USA (
     SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
-    TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS
 ) VALUES (
     'FLAT_FILE', 'MOVE_101', 'David Miller', DATE '2020-01-01', DATE '2023-08-01',
-    'GLD', 'AgentA', 'CA', 'USA', 90210, DATE '1985-05-03', 'A', 38, 'Y', DATE '2023-01-01'
+    'GLD', 'AgentA', 'CA', 'USA', 90210, DATE '1985-05-03', 'A', 38, 'Y', TIMESTAMP_NTZ '2023-01-01 00:00:00'
 );
 
 -- Interrupted batch fixture: simulates an interrupted run that claimed rows with an old BATCH_ID but failed before PROCESSED_AT was stamped
@@ -91,11 +91,11 @@ INSERT INTO RAW_MEMBER_LANDING (
 -- 12. Invalid DOB (unparseable calendar date, should be quarantined to DLQ)
 ('D', 'FLAT_FILE', 'BAD_DOB_1', 'Bad DOB User', '20220101', '20230101', 'GLD', 'AgentM', 'CA', 'USA', '99999999', 'A', '90210', 'batch_1.dat', 1),
 
--- 13. Same-day cross-country move in Batch 1 (arrives in USA with file_20240115_a.dat, line 10)
-('D', 'FLAT_FILE', 'SAME_DAY_MOVE_1', 'Same Day User', '20220101', '20230101', 'GLD', 'AgentSD', 'CA', 'USA', '01011990', 'A', '90210', 'file_20240115_a.dat', 10),
+-- 13. Same-day cross-country move in Batch 1 (arrives in USA with morning file zzz_20240115_090000.dat)
+('D', 'FLAT_FILE', 'SAME_DAY_MOVE_1', 'Same Day User', '20220101', '20230101', 'GLD', 'AgentSD', 'CA', 'USA', '01011990', 'A', '90210', 'zzz_20240115_090000.dat', 10),
 
--- 14. Same-country tie winner in Batch 1 (USA, line 20)
-('D', 'FLAT_FILE', 'SAME_CTRY_TIE_1', 'Tie Winner', '20220101', '20230101', 'GLD', 'AgentCT', 'CA', 'USA', '01011990', 'A', '90210', 'tie_1.dat', 20);
+-- 14. Same-country tie fixture in Batch 1 (USA, timestamp 20240115_120000)
+('D', 'FLAT_FILE', 'SAME_CTRY_TIE_1', 'Tie Initial', '20220101', '20230101', 'GLD', 'AgentCT', 'CA', 'USA', '01011990', 'A', '90210', 'tie_20240115_120000.dat', 20);
 
 -- Redemption fixtures
 -- Non-numeric miles_redeemed fixture: 'abc' quarantined without aborting
@@ -164,10 +164,10 @@ INSERT INTO RAW_MEMBER_LANDING (
 ('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat', 1),
 ('D', 'FLAT_FILE', 'BATCH_REN_1', 'Updated Name', '20200101', '20230601', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat', 2),
 ('D', 'FLAT_FILE', 'MOVE_101', 'David Miller Older', '20200101', '20210101', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'batch_old_20200101.dat', 3),
--- Same-day correction with equal line numbers (10 == 10) moving country from USA to IND (file_b wins over file_a)
-('D', 'FLAT_FILE', 'SAME_DAY_MOVE_1', 'Same Day User', '20220101', '20230101', 'GLD', 'AgentSD', 'MH', 'IND', '01011990', 'A', '40001', 'file_20240115_b.dat', 10),
--- Same-country tie with lower line number 5 (loses to existing line 20)
-('D', 'FLAT_FILE', 'SAME_CTRY_TIE_1', 'Tie Loser', '20220101', '20230101', 'GLD', 'AgentCT', 'CA', 'USA', '01011990', 'A', '90210', 'tie_1.dat', 5);
+-- Same-day correction with earlier-sorting file name aaa_20240115_140000.dat (14:00 > 09:00) moving country from USA to IND
+('D', 'FLAT_FILE', 'SAME_DAY_MOVE_1', 'Same Day User', '20220101', '20230101', 'GLD', 'AgentSD', 'MH', 'IND', '01011990', 'A', '40001', 'aaa_20240115_140000.dat', 10),
+-- Same-country identical timestamp re-send in Batch 2 (later load wins on full tie)
+('D', 'FLAT_FILE', 'SAME_CTRY_TIE_1', 'Tie Winner Later Load', '20220101', '20230101', 'GLD', 'AgentCT', 'CA', 'USA', '01011990', 'A', '90210', 'tie_20240115_120000.dat', 5);
 
 -- Resolve ambiguity for RESOLVE_101 before Batch 2 execution
 DELETE FROM STG_MEMBER_PROFILE WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_101';
@@ -563,12 +563,12 @@ WITH AssertionResults AS (
 
     UNION ALL
 
-    -- Scenario 22: Same-country tie with lower line number: existing higher line number record preserved
+    -- Scenario 22: Same-day correction in an earlier-sorting file name wins on later time; with identical timestamps later load wins
     SELECT
         34 AS test_id,
-        'Same-country tie with lower line number: existing higher line number record preserved' AS scenario,
-        '20' AS expected,
-        TO_VARCHAR(COALESCE(MAX(LINE_NO), 0)) AS actual
+        'Same-day correction in earlier-sorting file name wins on time and later load wins on tie' AS scenario,
+        'Tie Winner Later Load' AS expected,
+        MEMBER_NAME AS actual
     FROM TABLE_USA
     WHERE MEMBER_ID = 'SAME_CTRY_TIE_1'
 )

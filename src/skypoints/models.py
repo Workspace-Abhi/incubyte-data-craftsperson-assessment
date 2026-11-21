@@ -21,7 +21,14 @@ class RawMemberRecord:
     source_system: str = "FLAT_FILE"
     date_format_hint: Optional[str] = None
     extract_date: Optional[date] = None
+    extract_ts: Optional[datetime] = None
     line_no: Optional[int] = None
+
+    def __post_init__(self):
+        if self.extract_ts is not None and self.extract_date is None:
+            self.extract_date = self.extract_ts.date()
+        elif self.extract_date is not None and self.extract_ts is None:
+            self.extract_ts = datetime(self.extract_date.year, self.extract_date.month, self.extract_date.day)
 
 
 @dataclass
@@ -40,7 +47,14 @@ class CleanMemberRecord:
     source_file: Optional[str] = None
     source_system: str = "FLAT_FILE"
     extract_date: Optional[date] = None
+    extract_ts: Optional[datetime] = None
     line_no: Optional[int] = None
+
+    def __post_init__(self):
+        if self.extract_ts is not None and self.extract_date is None:
+            self.extract_date = self.extract_ts.date()
+        elif self.extract_date is not None and self.extract_ts is None:
+            self.extract_ts = datetime(self.extract_date.year, self.extract_date.month, self.extract_date.day)
 
 
 @dataclass

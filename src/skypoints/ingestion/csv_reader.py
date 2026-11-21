@@ -5,10 +5,10 @@ from pathlib import Path
 
 try:
     from skypoints.models import RawMemberRecord
-    from skypoints.ingestion.flat_file import extract_date_from_file_path
+    from skypoints.ingestion.flat_file import extract_ts_from_file_path
 except ImportError:
     from src.skypoints.models import RawMemberRecord
-    from src.skypoints.ingestion.flat_file import extract_date_from_file_path
+    from src.skypoints.ingestion.flat_file import extract_ts_from_file_path
 
 FilePath = Union[str, Path]
 
@@ -26,7 +26,7 @@ def read_csv_file(
 
     hint = date_format_hint
     src_system = path.stem.upper() if path.stem else "CSV"
-    file_extract_date = extract_date_from_file_path(path)
+    file_extract_ts = extract_ts_from_file_path(path)
 
     with open(path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -53,7 +53,7 @@ def read_csv_file(
                     source_file=path.name,
                     source_system=src_system,
                     date_format_hint=hint,
-                    extract_date=file_extract_date,
+                    extract_ts=file_extract_ts,
                     line_no=line_no,
                 )
             )

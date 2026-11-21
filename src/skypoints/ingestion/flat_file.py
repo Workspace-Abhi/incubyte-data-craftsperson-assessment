@@ -12,18 +12,33 @@ except ImportError:
 FilePath = Union[str, Path]
 
 
-def extract_date_from_file_path(path: Path) -> date:
-    """Extract extract_date from the first YYYYMMDD in filename, falling back to mtime."""
-    match = re.search(r'(\d{8})', path.name)
+def extract_ts_from_file_path(path: Path) -> datetime:
+    """Extract extract_ts from filename: parses YYYYMMDD and optional HHMMSS / HHMMSSTT, defaulting to 00:00:00, fallback to load time."""
+    name = path.name
+    match = re.search(r'(\d{8})(?:[_\s-]?(\d{6}))?', name)
     if match:
+        date_str = match.group(1)
+        time_str = match.group(2)
         try:
-            return datetime.strptime(match.group(1), "%Y%m%d").date()
+            d = datetime.strptime(date_str, "%Y%m%d")
+            if time_str:
+                return d.replace(
+                    hour=int(time_str[:2]),
+                    minute=int(time_str[2:4]),
+                    second=int(time_str[4:6]),
+                )
+            return d
         except ValueError:
             pass
     try:
-        return datetime.fromtimestamp(path.stat().st_mtime).date()
+        return datetime.fromtimestamp(path.stat().st_mtime)
     except Exception:
-        return date.today()
+        return datetime.now()
+
+
+def extract_date_from_file_path(path: Path) -> date:
+    """Extract extract_date from filename, falling back to mtime date."""
+    return extract_ts_from_file_path(path).date()
 
 
 def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
@@ -36,7 +51,7 @@ def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
     if not path.exists():
         return records
 
-    file_extract_date = extract_date_from_file_path(path)
+    file_extract_ts = extract_ts_from_file_path(path)
 
     with open(path, "r", encoding="utf-8") as f:
         for line_no, line in enumerate(f, start=1):
@@ -53,37 +68,37 @@ def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
             if not parts:
                 continue
 
-            record_type = parts[0].upper()
-            if record_type != "D":
+            rec_type = parts[0].upper()
+            if rec_type != "D":
                 continue
 
-            name = parts[1] if len(parts) > 1 else None
+            member_name = parts[1] if len(parts) > 1 else None
             member_id = parts[2] if len(parts) > 2 else None
-            enroll_dt = parts[3] if len(parts) > 3 else None
-            flight_dt = parts[4] if len(parts) > 4 else None
-            tier = parts[5] if len(parts) > 5 else None
-            agent = parts[6] if len(parts) > 6 else None
+            enrollment_date = parts[3] if len(parts) > 3 else None
+            last_flight_date = parts[4] if len(parts) > 4 else None
+            tier_code = parts[5] if len(parts) > 5 else None
+            agent_name = parts[6] if len(parts) > 6 else None
             state = parts[7] if len(parts) > 7 else None
             country = parts[8] if len(parts) > 8 else None
             dob = parts[9] if len(parts) > 9 else None
-            is_active = parts[10] if len(parts) > 10 else "A"
+            is_active = parts[10] if len(parts) > 10 else None
 
             records.append(
                 RawMemberRecord(
-                    member_name=name,
+                    member_name=member_name,
                     member_id=member_id,
-                    enrollment_date=enroll_dt,
-                    last_flight_date=flight_dt,
-                    tier_code=tier,
-                    agent_name=agent,
+                    enrollment_date=enrollment_date,
+                    last_flight_date=last_flight_date,
+                    tier_code=tier_code,
+                    agent_name=agent_name,
                     state=state,
                     country=country,
                     dob=dob,
                     is_active=is_active,
                     source_file=path.name,
                     source_system="FLAT_FILE",
-                    date_format_hint="FLAT_FILE",
-                    extract_date=file_extract_date,
+                    date_format_hint="YYYYMMDD",
+                    extract_ts=file_extract_ts,
                     line_no=line_no,
                 )
             )

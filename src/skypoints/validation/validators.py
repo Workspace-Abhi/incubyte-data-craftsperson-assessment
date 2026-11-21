@@ -209,6 +209,7 @@ def validate_member_record(raw: RawMemberRecord) -> Tuple[Optional[CleanMemberRe
         source_file=raw.source_file,
         source_system=raw.source_system,
         extract_date=raw.extract_date,
+        extract_ts=raw.extract_ts,
         line_no=raw.line_no,
     ), None
 
@@ -253,13 +254,14 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
             for clean, _, _ in items:
                 result.valid_records.append(clean)
         else:
-            # Names differ: sort deterministically by EXTRACT_DATE DESC,
-            # COALESCE(last_flight_date, enrollment_date) DESC, and LINE_NO / row index DESC
+            # Names differ: sort deterministically by EXTRACT_TS DESC,
+            # COALESCE(last_flight_date, enrollment_date) DESC, source_file DESC, and LINE_NO / row index DESC
             items_sorted = sorted(
                 items,
                 key=lambda triple: (
-                    triple[0].extract_date or date.min,
+                    triple[0].extract_ts or datetime.min,
                     triple[0].last_flight_date or triple[0].enrollment_date,
+                    triple[0].source_file or "",
                     triple[0].line_no or triple[2],
                 ),
                 reverse=True,

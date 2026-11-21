@@ -1,6 +1,6 @@
 """TDD tests for country routing and 'latest record wins' migration resolution."""
 import pytest
-from datetime import date
+from datetime import date, datetime
 from src.staging import StagingEngine
 from src.country_router import CountryRouter
 from src.models import CleanMemberRecord
@@ -358,77 +358,88 @@ class TestCountrySplitAndDeduplication:
         assert ind_rows[0]["member_id"] == "M_SAME_DAY"
         assert ind_rows[0]["country"] == "IND"
 
-    def test_same_country_tie_lower_line_no_does_not_throw_constraint_exception(self):
-        """Claude bug 2: With a same-country tie and lower line number, DuckDB must not throw ConstraintException."""
+    def test_same_day_correction_in_earlier_sorting_file_name_wins_on_later_time(self):
+        """P-K: A same-day correction in an earlier-sorting file name still wins when its time in the name is later."""
         engine = StagingEngine()
         router = CountryRouter(engine.conn)
 
-        # Batch 1: Member arrives with line_no = 10
+        # Batch 1: Morning file zzz_20240115_090000.dat puts member in USA
         batch1 = [
             CleanMemberRecord(
-                member_id="M_SAME_CTRY_TIE",
-                member_name="Winner User",
+                member_id="M_TIMED_MOVE",
+                member_name="Timed Move User",
                 enrollment_date=date(2024, 1, 1),
                 last_flight_date=date(2024, 1, 1),
                 country="USA",
-                source_file="file_1.dat",
-                extract_date=date(2024, 1, 15),
+                source_file="zzz_20240115_090000.dat",
+                extract_ts=datetime(2024, 1, 15, 9, 0, 0),
                 line_no=10,
             )
         ]
         engine.load_clean_records(batch1)
         router.execute_country_split()
+        assert len(router.get_country_records("table_usa")) == 1
 
-        # Batch 2: Same-day record for same member with lower line_no = 5 arrives
+        # Batch 2: Afternoon file aaa_20240115_140000.dat (earlier alphabetically, but later in time) moves to IND
         batch2 = [
             CleanMemberRecord(
-                member_id="M_SAME_CTRY_TIE",
-                member_name="Loser User",
+                member_id="M_TIMED_MOVE",
+                member_name="Timed Move User",
+                enrollment_date=date(2024, 1, 1),
+                last_flight_date=date(2024, 1, 1),
+                country="IND",
+                source_file="aaa_20240115_140000.dat",
+                extract_ts=datetime(2024, 1, 15, 14, 0, 0),
+                line_no=10,
+            )
+        ]
+        engine.load_clean_records(batch2)
+        router.execute_country_split()
+
+        assert len(router.get_country_records("table_usa")) == 0, "Member must be deleted from table_usa"
+        ind_rows = router.get_country_records("table_india")
+        assert len(ind_rows) == 1, "Member must be moved to table_india"
+        assert ind_rows[0]["member_id"] == "M_TIMED_MOVE"
+        assert ind_rows[0]["country"] == "IND"
+
+    def test_same_country_identical_timestamp_later_load_wins_on_tie(self):
+        """P-K: With identical timestamps and dates (full tie), the later load wins."""
+        engine = StagingEngine()
+        router = CountryRouter(engine.conn)
+
+        # Batch 1: Initial record
+        batch1 = [
+            CleanMemberRecord(
+                member_id="M_TIE_FULL",
+                member_name="Initial User",
                 enrollment_date=date(2024, 1, 1),
                 last_flight_date=date(2024, 1, 1),
                 country="USA",
                 source_file="file_1.dat",
-                extract_date=date(2024, 1, 15),
+                extract_ts=datetime(2024, 1, 15, 12, 0, 0),
+                line_no=20,
+            )
+        ]
+        engine.load_clean_records(batch1)
+        router.execute_country_split()
+
+        # Batch 2: Same-day identical timestamp re-send with updated details
+        engine.conn.execute("DELETE FROM stg_member_profile")
+        batch2 = [
+            CleanMemberRecord(
+                member_id="M_TIE_FULL",
+                member_name="Updated User Later Load",
+                enrollment_date=date(2024, 1, 1),
+                last_flight_date=date(2024, 1, 1),
+                country="USA",
+                source_file="file_1.dat",
+                extract_ts=datetime(2024, 1, 15, 12, 0, 0),
                 line_no=5,
             )
         ]
         engine.load_clean_records(batch2)
-        # Must execute cleanly without ConstraintException
         router.execute_country_split()
 
         usa_rows = router.get_country_records("table_usa")
         assert len(usa_rows) == 1
-        assert usa_rows[0]["member_name"] == "Winner User", "Existing higher line_no record must be retained"
-        assert usa_rows[0]["line_no"] == 10
-
-    def test_two_same_day_files_ranked_by_source_file_name_first(self):
-        """Claude minor: Two same-day files in one batch are ranked by SOURCE_FILE_NAME before line_no."""
-        engine = StagingEngine()
-        router = CountryRouter(engine.conn)
-
-        records = [
-            CleanMemberRecord(
-                member_id="M_FILE_TIE",
-                member_name="File A User",
-                enrollment_date=date(2024, 1, 1),
-                country="USA",
-                source_file="file_20240115_a.dat",
-                extract_date=date(2024, 1, 15),
-                line_no=99,
-            ),
-            CleanMemberRecord(
-                member_id="M_FILE_TIE",
-                member_name="File B User",
-                enrollment_date=date(2024, 1, 1),
-                country="USA",
-                source_file="file_20240115_b.dat",
-                extract_date=date(2024, 1, 15),
-                line_no=1,
-            ),
-        ]
-        engine.load_clean_records(records)
-        router.execute_country_split()
-
-        usa_rows = router.get_country_records("table_usa")
-        assert len(usa_rows) == 1
-        assert usa_rows[0]["member_name"] == "File B User", "File B must win over File A despite lower line_no"
+        assert usa_rows[0]["member_name"] == "Updated User Later Load", "Later load must win on full tie"

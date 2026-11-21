@@ -82,6 +82,7 @@ class CountryRouter:
                 age INTEGER,
                 stale_member VARCHAR(1),
                 extract_date DATE,
+                extract_ts TIMESTAMP,
                 line_no INTEGER,
                 last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source_system, member_id)
@@ -101,7 +102,7 @@ class CountryRouter:
                     *,
                     ROW_NUMBER() OVER (
                         PARTITION BY source_system, member_id
-                        ORDER BY COALESCE(extract_date, DATE '1970-01-01') DESC,
+                        ORDER BY COALESCE(extract_ts, TIMESTAMP '1970-01-01 00:00:00') DESC,
                                  COALESCE(last_flight_date, enrollment_date) DESC,
                                  COALESCE(source_file, '') DESC,
                                  COALESCE(line_no, 0) DESC
@@ -117,18 +118,18 @@ class CountryRouter:
         for tbl in CANONICAL_TABLE_MAP.values():
             self.ensure_target_table(tbl)
 
-        # 3. Incremental Country Merges: Delete existing row only if incoming batch record is newer by P4 order
+        # 3. Incremental Country Merges: Delete existing row only if incoming batch record is newer
         countries_df = self.conn.execute("SELECT DISTINCT country FROM tmp_latest_members").fetchall()
         country_counts: Dict[str, int] = {}
 
         # View of all current records across country tables to prevent older late-arriving records from inserting
-        union_sql = " UNION ALL ".join([f"SELECT source_system, member_id, country, extract_date, last_flight_date, enrollment_date, source_file, line_no FROM {t}" for t in CANONICAL_TABLE_MAP.values()])
+        union_sql = " UNION ALL ".join([f"SELECT source_system, member_id, country, extract_date, extract_ts, last_flight_date, enrollment_date, source_file, line_no FROM {t}" for t in CANONICAL_TABLE_MAP.values()])
         self.conn.execute(f"CREATE OR REPLACE TEMP VIEW tmp_all_country_members AS {union_sql};")
 
         for (country_val,) in countries_df:
             target_table = self.get_table_name_for_country(country_val)
 
-            # Delete existing row in target_table ONLY if incoming record is newer by P4 order or tie
+            # Delete existing row in target_table ONLY if incoming record is newer or equal on tie (incoming later load wins)
             self.conn.execute(f"""
                 DELETE FROM {target_table} target
                 WHERE EXISTS (
@@ -137,23 +138,12 @@ class CountryRouter:
                       AND src.member_id = target.member_id
                       AND src.country = ?
                       AND (
-                          COALESCE(src.extract_date, DATE '1970-01-01') > COALESCE(target.extract_date, DATE '1970-01-01')
+                          COALESCE(src.extract_ts, TIMESTAMP '1970-01-01 00:00:00') > COALESCE(target.extract_ts, TIMESTAMP '1970-01-01 00:00:00')
                           OR (
-                              COALESCE(src.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
-                              AND COALESCE(src.last_flight_date, src.enrollment_date) > COALESCE(target.last_flight_date, target.enrollment_date)
+                              COALESCE(src.extract_ts, TIMESTAMP '1970-01-01 00:00:00') = COALESCE(target.extract_ts, TIMESTAMP '1970-01-01 00:00:00')
+                              AND COALESCE(src.last_flight_date, src.enrollment_date) >= COALESCE(target.last_flight_date, target.enrollment_date)
                           )
-                          OR (
-                              COALESCE(src.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
-                              AND COALESCE(src.last_flight_date, src.enrollment_date) = COALESCE(target.last_flight_date, target.enrollment_date)
-                              AND (
-                                  COALESCE(src.source_file, '') > COALESCE(target.source_file, '')
-                                  OR (
-                                      COALESCE(src.source_file, '') = COALESCE(target.source_file, '')
-                                      AND COALESCE(src.line_no, 0) >= COALESCE(target.line_no, 0)
-                                  )
-                              )
-                          )
-                          OR target.extract_date IS NULL
+                          OR target.extract_ts IS NULL
                       )
                 );
             """, [country_val])
@@ -163,12 +153,12 @@ class CountryRouter:
                 INSERT INTO {target_table} (
                     source_system, source_file, member_id, member_name, enrollment_date, last_flight_date,
                     tier_code, agent_name, state, country, post_code, dob,
-                    is_active, age, stale_member, extract_date, line_no, last_updated_at
+                    is_active, age, stale_member, extract_date, extract_ts, line_no, last_updated_at
                 )
                 SELECT
                     src.source_system, src.source_file, src.member_id, src.member_name, src.enrollment_date, src.last_flight_date,
                     src.tier_code, src.agent_name, src.state, src.country, src.post_code, src.dob,
-                    src.is_active, src.age, src.stale_member, src.extract_date, src.line_no, CURRENT_TIMESTAMP
+                    src.is_active, src.age, src.stale_member, src.extract_date, src.extract_ts, src.line_no, CURRENT_TIMESTAMP
                 FROM tmp_latest_members src
                 WHERE src.country = ?
                   AND NOT EXISTS (
@@ -181,22 +171,10 @@ class CountryRouter:
                       WHERE existing.source_system = src.source_system
                         AND existing.member_id = src.member_id
                         AND (
-                            COALESCE(existing.extract_date, DATE '1970-01-01') > COALESCE(src.extract_date, DATE '1970-01-01')
+                            COALESCE(existing.extract_ts, TIMESTAMP '1970-01-01 00:00:00') > COALESCE(src.extract_ts, TIMESTAMP '1970-01-01 00:00:00')
                             OR (
-                                COALESCE(existing.extract_date, DATE '1970-01-01') = COALESCE(src.extract_date, DATE '1970-01-01')
+                                COALESCE(existing.extract_ts, TIMESTAMP '1970-01-01 00:00:00') = COALESCE(src.extract_ts, TIMESTAMP '1970-01-01 00:00:00')
                                 AND COALESCE(existing.last_flight_date, existing.enrollment_date) > COALESCE(src.last_flight_date, src.enrollment_date)
-                            )
-                            OR (
-                                COALESCE(existing.extract_date, DATE '1970-01-01') = COALESCE(src.extract_date, DATE '1970-01-01')
-                                AND COALESCE(existing.last_flight_date, existing.enrollment_date) = COALESCE(src.last_flight_date, src.enrollment_date)
-                                AND (
-                                    COALESCE(existing.source_file, '') > COALESCE(src.source_file, '')
-                                    OR (
-                                        COALESCE(existing.source_file, '') = COALESCE(src.source_file, '')
-                                        AND COALESCE(existing.line_no, 0) > COALESCE(src.line_no, 0)
-                                    )
-                                )
-                                AND existing.country <> src.country
                             )
                         )
                   );
@@ -205,7 +183,7 @@ class CountryRouter:
             inserted_count = self.conn.execute(f"SELECT COUNT(*) FROM {target_table}").fetchone()[0]
             country_counts[target_table] = inserted_count
 
-        # 4. Clean up migration: remove members from other country tables only if incoming record has a different country AND is newer or equal on tie
+        # 4. Clean up migration: remove members from other country tables if incoming record has a different country and is newer or equal on tie
         all_canonical_tables = list(set(CANONICAL_TABLE_MAP.values()))
         for tbl in all_canonical_tables:
             self.conn.execute(f"""
@@ -220,26 +198,15 @@ class CountryRouter:
                           WHEN UPPER(d.country) IN ('CAN', 'CANADA') THEN 'table_canada'
                           WHEN UPPER(d.country) IN ('PHIL', 'PH') THEN 'table_philippines'
                           WHEN UPPER(d.country) IN ('AU', 'AUS') THEN 'table_australia'
-                          ELSE 'table_unknown'
+                          ELSE NULL
                       END
                       AND (
-                          COALESCE(d.extract_date, DATE '1970-01-01') > COALESCE(target.extract_date, DATE '1970-01-01')
+                          COALESCE(d.extract_ts, TIMESTAMP '1970-01-01 00:00:00') > COALESCE(target.extract_ts, TIMESTAMP '1970-01-01 00:00:00')
                           OR (
-                              COALESCE(d.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
-                              AND COALESCE(d.last_flight_date, d.enrollment_date) > COALESCE(target.last_flight_date, target.enrollment_date)
+                              COALESCE(d.extract_ts, TIMESTAMP '1970-01-01 00:00:00') = COALESCE(target.extract_ts, TIMESTAMP '1970-01-01 00:00:00')
+                              AND COALESCE(d.last_flight_date, d.enrollment_date) >= COALESCE(target.last_flight_date, target.enrollment_date)
                           )
-                          OR (
-                              COALESCE(d.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
-                              AND COALESCE(d.last_flight_date, d.enrollment_date) = COALESCE(target.last_flight_date, target.enrollment_date)
-                              AND (
-                                  COALESCE(d.source_file, '') > COALESCE(target.source_file, '')
-                                  OR (
-                                      COALESCE(d.source_file, '') = COALESCE(target.source_file, '')
-                                      AND COALESCE(d.line_no, 0) >= COALESCE(target.line_no, 0)
-                                  )
-                              )
-                          )
-                          OR target.extract_date IS NULL
+                          OR target.extract_ts IS NULL
                       )
                 );
             """)
@@ -247,7 +214,7 @@ class CountryRouter:
         return country_counts
 
     def get_country_records(self, table_name: str) -> List[Dict[str, Any]]:
-        """Fetch all records from a given country table with native Python types."""
+        """Fetch all records from a specific country table."""
         self.ensure_target_table(table_name)
         cur = self.conn.cursor()
         cur.execute(f"SELECT * FROM {table_name}")
