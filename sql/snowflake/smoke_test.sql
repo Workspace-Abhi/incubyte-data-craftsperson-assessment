@@ -28,13 +28,14 @@ USE SCHEMA SKYPOINTS_SMOKE_TEST;
 !source sql/snowflake/ddl.sql
 
 -- Step 3: Seed initial historical state & load fixtures into landing
--- Pre-existing historical member in TABLE_USA who moves to India in today's batch
+-- Pre-existing historical member in TABLE_USA who moves to India in today's batch.
+-- Seeded with higher flight date (2023-08-01) but older extract date (2023-01-01).
 INSERT INTO TABLE_USA (
     SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
-    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, AGE, STALE_MEMBER
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE
 ) VALUES (
-    'FLAT_FILE', 'MOVE_101', 'David Miller', DATE '2020-01-01', DATE '2021-05-01',
-    'GLD', 'AgentA', 'CA', 'USA', DATE '1985-05-03', 'A', 38, 'Y'
+    'FLAT_FILE', 'MOVE_101', 'David Miller', DATE '2020-01-01', DATE '2023-08-01',
+    'GLD', 'AgentA', 'CA', 'USA', 90210, DATE '1985-05-03', 'A', 38, 'Y', DATE '2023-01-01'
 );
 
 -- Member landing fixtures covering all test scenarios (loaded in a single batch)
@@ -42,8 +43,8 @@ INSERT INTO RAW_MEMBER_LANDING (
     RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
     TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
 ) VALUES
--- 1. Member MOVE_101 moving country to IND with newer flight date
-('D', 'FLAT_FILE', 'MOVE_101', 'David Miller', '20200101', '20230115', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'today_batch.dat'),
+-- 1. Member MOVE_101 moving country to IND with lower flight date (20210501) but newer extract date (20240115)
+('D', 'FLAT_FILE', 'MOVE_101', 'David Miller', '20200101', '20210501', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'today_batch_20240115.dat'),
 
 -- 2. Same raw ID 'DUP_1' across two distinct source systems
 ('D', 'IND_SYS', 'DUP_1', 'Vikas Patel', '20220101', '20230615', 'SLV', 'AgentB', 'DL', 'IND', '15081995', 'A', '11001', 'IND.csv'),
@@ -60,9 +61,40 @@ INSERT INTO RAW_MEMBER_LANDING (
 ('D', 'FLAT_FILE', 'BAD_CTRY_1', 'Hans Gruber', '20220101', '20230101', 'GLD', 'AgentF', 'BER', 'GERMANY', '01011990', 'A', '10115', 'eu_batch.dat'),
 
 -- 6. Null country (quarantined to DLQ)
-('D', 'FLAT_FILE', 'NULL_CTRY_1', 'Jane Doe', '20220101', '20230101', 'GLD', 'AgentG', 'CA', NULL, '01011990', 'A', '90210', 'us_batch.dat');
+('D', 'FLAT_FILE', 'NULL_CTRY_1', 'Jane Doe', '20220101', '20230101', 'GLD', 'AgentG', 'CA', NULL, '01011990', 'A', '90210', 'us_batch.dat'),
+
+-- 7. Two distinct rows with missing member_id in the same batch (both must be quarantined, not suppressed)
+('D', 'FLAT_FILE', NULL, 'Missing ID Alpha', '20220101', '20230101', 'GLD', 'AgentH', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+('D', 'FLAT_FILE', NULL, 'Missing ID Beta', '20220101', '20230101', 'GLD', 'AgentH', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+
+-- 8. Same ID in two distinct source systems both bad (both must be quarantined)
+('D', 'IND_SYS', 'BAD_DUP_1', 'Bad Ind User', '20220101', '20230101', 'GLD', 'AgentI', 'BER', 'GERMANY', '01011990', 'A', '11001', 'IND_bad.csv'),
+('D', 'USA_SYS', 'BAD_DUP_1', 'Bad Usa User', '20220101', '20230101', 'GLD', 'AgentI', 'BER', 'GERMANY', '01011990', 'A', '10001', 'USA_bad.csv'),
+
+-- 9. Bad row arriving in Batch 1 (will be repeated in Batch 2)
+('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+
+-- 10. Member BATCH_REN_1 original name in Batch 1 (will be renamed in Batch 2)
+('D', 'FLAT_FILE', 'BATCH_REN_1', 'Original Name', '20200101', '20210101', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+
+-- 11. Member RESOLVE_101 ambiguous across two sources in Batch 1 (will be resolved in Batch 2)
+('D', 'IND_SYS', 'RESOLVE_101', 'Rahul Ind', '20200101', '20210101', 'GLD', 'AgentL', 'MH', 'IND', '01011990', 'A', '40001', 'ind_1.dat'),
+('D', 'USA_SYS', 'RESOLVE_101', 'Sam Usa', '20200101', '20210101', 'GLD', 'AgentL', 'CA', 'USA', '01011990', 'A', '90210', 'usa_1.dat'),
+
+-- 12. Invalid DOB (unparseable calendar date, should be quarantined to DLQ)
+('D', 'FLAT_FILE', 'BAD_DOB_1', 'Bad DOB User', '20220101', '20230101', 'GLD', 'AgentM', 'CA', 'USA', '99999999', 'A', '90210', 'batch_1.dat');
 
 -- Redemption fixtures
+-- Non-numeric miles_redeemed fixture: 'abc' quarantined without aborting
+INSERT INTO RAW_REDEMPTIONS_LANDING (FEED_PAYLOAD, FEED_DATE)
+SELECT PARSE_JSON('{
+    "member_id": "MOVE_101",
+    "feed_date": "20240115",
+    "redemptions": [
+        {"txn_id": "TXN_NON_NUM_1", "txn_date": "20240110", "partner": "SkyPoints", "miles_redeemed": "abc", "status": "COMPLETED"}
+    ]
+}'), '20240115';
+
 -- Replay fixture: identical TXN_REPLAY_1 sent twice
 INSERT INTO RAW_REDEMPTIONS_LANDING (FEED_PAYLOAD, FEED_DATE)
 SELECT PARSE_JSON('{
@@ -94,17 +126,53 @@ SELECT PARSE_JSON('{
     ]
 }'), '20240115';
 
--- Step 4: Run production transformations
-!source sql/snowflake/transformations.sql
+-- Ambiguity round-trip fixture: RESOLVE_101 initially ambiguous, resolved in Batch 2
+INSERT INTO RAW_REDEMPTIONS_LANDING (FEED_PAYLOAD, FEED_DATE)
+SELECT PARSE_JSON('{
+    "member_id": "RESOLVE_101",
+    "feed_date": "20240115",
+    "redemptions": [
+        {"txn_id": "TXN_RESOLVE_1", "txn_date": "20240110", "partner": "SkyPoints", "miles_redeemed": 3000, "status": "COMPLETED"}
+    ]
+}'), '20240115';
 
--- Step 5: Run production country merges
-!source sql/snowflake/generated_country_merges.sql
+-- Step 4: Run production pipeline via run_all.sql (Run 1: Processes Initial Batches)
+!source sql/snowflake/run_all.sql
 
--- Step 5B: Execute Idempotent Rerun (run transformations.sql a second time)
--- Landing rows have been stamped with PROCESSED_AT, so a rerun processes 0 new rows
--- and does not duplicate staging or DLQ records.
-!source sql/snowflake/transformations.sql
-!source sql/snowflake/generated_country_merges.sql
+-- Step 4B: Load Batch 2 arriving in a separate batch
+-- Includes:
+-- 1. Identical malformed record to test multi-batch reject preservation
+-- 2. Rename across batches: BATCH_REN_1 renamed to 'Updated Name' with newer flight date
+-- 3. Ambiguity resolution: remove spurious secondary source for RESOLVE_101 so ambiguity disappears
+INSERT INTO RAW_MEMBER_LANDING (
+    RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
+) VALUES
+('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat'),
+('D', 'FLAT_FILE', 'BATCH_REN_1', 'Updated Name', '20200101', '20230601', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat');
+
+-- Resolve ambiguity for RESOLVE_101 before Batch 2 execution
+DELETE FROM STG_MEMBER_PROFILE WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_101';
+DELETE FROM TABLE_USA WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_101';
+
+-- Step 4C: Run production pipeline for Batch 2 via run_all.sql (Run 2: Processes Batch 2)
+!source sql/snowflake/run_all.sql
+
+-- Step 5: Capture snapshot of mart and table counts BEFORE rerun into temporary table
+CREATE OR REPLACE TEMPORARY TABLE PRE_RERUN_SNAPSHOT AS
+SELECT
+    0 AS STG_MEMBER_COUNT, -- Staging is per-batch (P6); empty rerun batch produces 0 staging rows
+    (SELECT COUNT(*) FROM RAW_DLQ_QUARANTINE) AS DLQ_COUNT,
+    (SELECT COUNT(*) FROM STG_REDEMPTIONS_FLATTENED) AS STG_REDEMP_COUNT,
+    (SELECT COUNT(*) FROM MEMBER_LOYALTY_360) AS MART_COUNT,
+    (SELECT COUNT(*) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101' AND COUNTRY = 'IND') AS MOVE_101_COUNTRY_CORRECT,
+    (SELECT TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_COMPLETED_MILES,
+    (SELECT TO_VARCHAR(COALESCE(PENDING_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_PENDING_MILES;
+
+-- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 3: Rerun adds no new rows)
+-- All landing rows have been stamped with PROCESSED_AT, so a rerun processes 0 new rows
+-- and does not duplicate staging, DLQ, or mart records.
+!source sql/snowflake/run_all.sql
 
 -- Step 6: Single evaluation query returning scenario, expected, actual, PASS/FAIL
 WITH AssertionResults AS (
@@ -119,10 +187,10 @@ WITH AssertionResults AS (
 
     UNION ALL
 
-    -- Scenario 1B: Member moving country inserted into new table (TABLE_INDIA)
+    -- Scenario 1B: Newer extract date move: inserted into new TABLE_INDIA
     SELECT
         2 AS test_id,
-        'Member moving country: inserted into new TABLE_INDIA' AS scenario,
+        'Newer extract date move: inserted into new TABLE_INDIA' AS scenario,
         '1' AS expected,
         TO_VARCHAR(COUNT(*)) AS actual
     FROM TABLE_INDIA
@@ -213,20 +281,49 @@ WITH AssertionResults AS (
 
     UNION ALL
 
-    -- Scenario 8: Duplicate txn_id replay is idempotent (miles not doubled)
+    -- Scenario 8A: Mart before rerun has expected total member rows
     SELECT
         10 AS test_id,
-        'Duplicate txn_id replay: idempotent merge (miles not doubled)' AS scenario,
+        'Mart before rerun: MEMBER_LOYALTY_360 total member rows' AS scenario,
+        '5' AS expected,
+        TO_VARCHAR(MART_COUNT) AS actual
+    FROM PRE_RERUN_SNAPSHOT
+
+    UNION ALL
+
+    -- Scenario 8B: Mart before rerun reflects country merge (MOVE_101 updated to IND)
+    SELECT
+        11 AS test_id,
+        'Mart before rerun: MOVE_101 country updated to IND' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(MOVE_101_COUNTRY_CORRECT) AS actual
+    FROM PRE_RERUN_SNAPSHOT
+
+    UNION ALL
+
+    -- Scenario 8C: Mart before rerun: COMPLETED miles summed correctly and duplicate replay ignored
+    SELECT
+        12 AS test_id,
+        'Mart before rerun: MOVE_101 COMPLETED miles summed correctly' AS scenario,
         '5000' AS expected,
-        TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) AS actual
-    FROM MEMBER_LOYALTY_360
-    WHERE MEMBER_ID = 'MOVE_101'
+        MOVE_101_COMPLETED_MILES AS actual
+    FROM PRE_RERUN_SNAPSHOT
+
+    UNION ALL
+
+    -- Scenario 8D: Mart before rerun: PENDING miles tracked separately
+    SELECT
+        13 AS test_id,
+        'Mart before rerun: MOVE_101 PENDING miles tracked separately' AS scenario,
+        '0' AS expected,
+        MOVE_101_PENDING_MILES AS actual
+    FROM PRE_RERUN_SNAPSHOT
 
     UNION ALL
 
     -- Scenario 9: Ambiguous member_id redemption quarantined
     SELECT
-        11 AS test_id,
+        14 AS test_id,
         'Ambiguous member_id redemption: quarantined into DLQ' AS scenario,
         '1' AS expected,
         TO_VARCHAR(COUNT(*)) AS actual
@@ -236,23 +333,140 @@ WITH AssertionResults AS (
 
     UNION ALL
 
-    -- Scenario 10: Staging member row count unchanged after rerun (idempotent batch tracking)
+    -- Scenario 10A: Staging member row count unchanged after rerun (idempotent batch tracking)
     SELECT
-        12 AS test_id,
-        'Rerun idempotency: STG_MEMBER_PROFILE count unchanged on rerun' AS scenario,
-        '6' AS expected,
-        TO_VARCHAR(COUNT(*)) AS actual
-    FROM STG_MEMBER_PROFILE
+        15 AS test_id,
+        'Rerun delta: STG_MEMBER_PROFILE row count unchanged' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR((SELECT COUNT(*) FROM STG_MEMBER_PROFILE) - (SELECT STG_MEMBER_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 
-    -- Scenario 11: DLQ row count unchanged after rerun (idempotent DLQ merges)
+    -- Scenario 10B: DLQ row count unchanged after rerun (idempotent DLQ merges)
     SELECT
-        13 AS test_id,
-        'Rerun idempotency: RAW_DLQ_QUARANTINE count unchanged on rerun' AS scenario,
-        '5' AS expected,
+        16 AS test_id,
+        'Rerun delta: RAW_DLQ_QUARANTINE row count unchanged' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR((SELECT COUNT(*) FROM RAW_DLQ_QUARANTINE) - (SELECT DLQ_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+
+    UNION ALL
+
+    -- Scenario 10C: Staging redemptions count unchanged after rerun
+    SELECT
+        17 AS test_id,
+        'Rerun delta: STG_REDEMPTIONS_FLATTENED row count unchanged' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR((SELECT COUNT(*) FROM STG_REDEMPTIONS_FLATTENED) - (SELECT STG_REDEMP_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+
+    UNION ALL
+
+    -- Scenario 10D: Mart row count unchanged after rerun
+    SELECT
+        18 AS test_id,
+        'Rerun delta: MEMBER_LOYALTY_360 row count unchanged' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR((SELECT COUNT(*) FROM MEMBER_LOYALTY_360) - (SELECT MART_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+
+    UNION ALL
+
+    -- Scenario 11A: Two distinct rows with missing member_id both preserved in DLQ
+    SELECT
+        19 AS test_id,
+        'DLQ reject preservation: two rows with missing member_id both quarantined' AS scenario,
+        '2' AS expected,
         TO_VARCHAR(COUNT(*)) AS actual
     FROM RAW_DLQ_QUARANTINE
+    WHERE ERROR_REASON = 'Missing mandatory Member_Id'
+
+    UNION ALL
+
+    -- Scenario 11B: Same ID in two source systems both bad both preserved in DLQ
+    SELECT
+        20 AS test_id,
+        'DLQ reject preservation: same ID in two source systems both bad both quarantined' AS scenario,
+        '2' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'BAD_DUP_1'
+
+    UNION ALL
+
+    -- Scenario 11C: Same bad row in two batches yields 2 DLQ rows
+    SELECT
+        21 AS test_id,
+        'DLQ reject preservation: same bad row in two batches yields 2 DLQ rows' AS scenario,
+        '2' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'REPEAT_BAD_1'
+
+    UNION ALL
+
+    -- Scenario 12A: Rename across two batches: no DLQ row created
+    SELECT
+        22 AS test_id,
+        'Rename across two batches: no DLQ row created' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'BATCH_REN_1'
+
+    UNION ALL
+
+    -- Scenario 12B: Rename across two batches: newest name wins in target table
+    SELECT
+        23 AS test_id,
+        'Rename across two batches: newest name wins in target table' AS scenario,
+        'Updated Name' AS expected,
+        MEMBER_NAME AS actual
+    FROM TABLE_USA
+    WHERE MEMBER_ID = 'BATCH_REN_1'
+
+    UNION ALL
+
+    -- Scenario 13: Ambiguity round trip: redemptions return to mart when ambiguity disappears
+    SELECT
+        24 AS test_id,
+        'Ambiguity round trip: redemptions return to mart when ambiguity disappears' AS scenario,
+        '3000' AS expected,
+        TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) AS actual
+    FROM MEMBER_LOYALTY_360
+    WHERE MEMBER_ID = 'RESOLVE_101'
+
+    UNION ALL
+
+    -- Scenario 14: Invalid DOB quarantined into DLQ
+    SELECT
+        25 AS test_id,
+        'Invalid DOB: quarantined into DLQ' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'BAD_DOB_1'
+      AND ERROR_REASON = 'Invalid DOB: unparseable calendar date'
+
+    UNION ALL
+
+    -- Scenario 15: Non-numeric miles quarantined into DLQ without abort
+    SELECT
+        26 AS test_id,
+        'Non-numeric miles: quarantined into DLQ without abort' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'TXN_NON_NUM_1'
+      AND ERROR_REASON = 'Invalid miles_redeemed data type: non-numeric'
+
+    UNION ALL
+
+    -- Scenario 16: POST_CODE present in country target table
+    SELECT
+        27 AS test_id,
+        'POST_CODE present in country target table' AS scenario,
+        '40001' AS expected,
+        TO_VARCHAR(COALESCE(MAX(POST_CODE), 0)) AS actual
+    FROM TABLE_INDIA
+    WHERE MEMBER_ID = 'MOVE_101'
 )
 SELECT
     scenario,

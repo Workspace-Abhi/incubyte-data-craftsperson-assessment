@@ -59,8 +59,6 @@ class SkyPointsPipeline:
             json_file_path: Path to partner redemption JSON feed.
             csv_file_mappings: Dict mapping CSV path to default country.
             reference_date: Reference date for Age and Stale_Member calculations.
-            namespace_csv_ids: If True, prefixes CSV IDs with country (e.g. USA_1, IND_1)
-                               to avoid cross-file ID collision data loss.
         """
         raw_records: List[RawMemberRecord] = []
 

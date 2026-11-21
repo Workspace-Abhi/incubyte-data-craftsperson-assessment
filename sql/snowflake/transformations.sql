@@ -5,8 +5,10 @@
 -- 1. Quarantine malformed rows to RAW_DLQ_QUARANTINE (Idempotent MERGE)
 -- 2. Load staging from landing with exact calendar Age, Stale_Member, and Batch ID
 -- 3. "Latest record wins" deduplication and country routing for ALL 5 countries
--- 4. Semi-structured JSON flattening & Loyalty 360 mart (COMPLETED miles only)
--- 5. Final update stamping PROCESSED_AT and BATCH_ID on landing
+-- 4. Semi-structured JSON flattening into STG_REDEMPTIONS_FLATTENED
+-- NOTE: Step 5 (Analytical Mart Build) and Step 6 (Finalize Batch Tracking)
+-- have been separated into sql/snowflake/03_mart_and_finalize.sql so country
+-- routing merges complete before mart calculation.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -14,78 +16,91 @@
 -- ----------------------------------------------------------------------------
 SET run_batch_id = UUID_STRING();
 
+-- STG_MEMBER_PROFILE is per-batch; truncate before loading the incoming batch
+TRUNCATE TABLE STG_MEMBER_PROFILE;
+
 -- ----------------------------------------------------------------------------
--- STEP 1: Quarantine Bad Landing Records into RAW_DLQ_QUARANTINE (Idempotent MERGE)
+-- STEP 1: Quarantine Bad Landing Records into RAW_DLQ_QUARANTINE
 -- Sanitizes empty strings '', 'NULL', and 'NONE' before checking constraints.
 -- Validates mandatory fields, calendar dates, domain rules, and canonical country.
+-- Plain INSERT with BATCH_ID and RAW_RECORD_HASH; landing PROCESSED_AT guarantees idempotency.
 -- ----------------------------------------------------------------------------
-MERGE INTO RAW_DLQ_QUARANTINE target
-USING (
-    WITH SanitizedLanding AS (
-        SELECT
-            RECORD_TYPE,
-            COALESCE(CASE WHEN NULLIF(TRIM(SOURCE_SYSTEM), '') IS NULL OR UPPER(TRIM(SOURCE_SYSTEM)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(SOURCE_SYSTEM) END, 'FLAT_FILE') AS SOURCE_SYSTEM,
-            CASE WHEN NULLIF(TRIM(MEMBER_ID), '') IS NULL OR UPPER(TRIM(MEMBER_ID)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(MEMBER_ID) END AS MEMBER_ID,
-            CASE WHEN NULLIF(TRIM(MEMBER_NAME), '') IS NULL OR UPPER(TRIM(MEMBER_NAME)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(MEMBER_NAME) END AS MEMBER_NAME,
-            CASE WHEN NULLIF(TRIM(ENROLLMENT_DATE), '') IS NULL OR UPPER(TRIM(ENROLLMENT_DATE)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(ENROLLMENT_DATE) END AS ENROLLMENT_DATE,
-            CASE WHEN NULLIF(TRIM(LAST_FLIGHT_DATE), '') IS NULL OR UPPER(TRIM(LAST_FLIGHT_DATE)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(LAST_FLIGHT_DATE) END AS LAST_FLIGHT_DATE,
-            CASE WHEN NULLIF(TRIM(TIER_CODE), '') IS NULL OR UPPER(TRIM(TIER_CODE)) IN ('NULL', 'NONE') THEN NULL ELSE UPPER(TRIM(TIER_CODE)) END AS TIER_CODE,
-            CASE WHEN NULLIF(TRIM(AGENT_NAME), '') IS NULL OR UPPER(TRIM(AGENT_NAME)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(AGENT_NAME) END AS AGENT_NAME,
-            CASE WHEN NULLIF(TRIM(STATE), '') IS NULL OR UPPER(TRIM(STATE)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(STATE) END AS STATE,
-            CASE WHEN NULLIF(TRIM(COUNTRY), '') IS NULL OR UPPER(TRIM(COUNTRY)) IN ('NULL', 'NONE') THEN NULL ELSE UPPER(TRIM(COUNTRY)) END AS COUNTRY,
-            CASE WHEN NULLIF(TRIM(POST_CODE), '') IS NULL OR UPPER(TRIM(POST_CODE)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(POST_CODE) END AS POST_CODE,
-            CASE WHEN NULLIF(TRIM(DOB), '') IS NULL OR UPPER(TRIM(DOB)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(DOB) END AS DOB,
-            CASE WHEN NULLIF(TRIM(IS_ACTIVE), '') IS NULL OR UPPER(TRIM(IS_ACTIVE)) IN ('NULL', 'NONE') THEN NULL ELSE UPPER(TRIM(IS_ACTIVE)) END AS IS_ACTIVE,
-            SOURCE_FILE_NAME,
-            INGESTED_AT
-        FROM RAW_MEMBER_LANDING
-        WHERE PROCESSED_AT IS NULL
-    )
+INSERT INTO RAW_DLQ_QUARANTINE (
+    RECORD_ID,
+    RAW_RECORD,
+    RAW_RECORD_HASH,
+    ERROR_REASON,
+    SOURCE_FEED,
+    SOURCE_SYSTEM,
+    SOURCE_FILE_NAME,
+    BATCH_ID,
+    QUARANTINED_AT
+)
+WITH SanitizedLanding AS (
     SELECT
-        COALESCE(s.MEMBER_ID, 'UNKNOWN_ID') AS RECORD_ID,
-        CONCAT_WS('|', s.RECORD_TYPE, s.SOURCE_SYSTEM, s.MEMBER_NAME, s.MEMBER_ID, s.ENROLLMENT_DATE, s.LAST_FLIGHT_DATE, s.TIER_CODE, s.AGENT_NAME, s.STATE, s.COUNTRY, s.DOB, s.IS_ACTIVE) AS RAW_RECORD,
-        CASE
-            WHEN s.MEMBER_ID IS NULL THEN 'Missing mandatory Member_Id'
-            WHEN s.MEMBER_NAME IS NULL THEN 'Missing mandatory Member_Name'
-            WHEN s.ENROLLMENT_DATE IS NULL THEN 'Missing mandatory Enrollment_Date'
-            WHEN TRY_TO_DATE(s.ENROLLMENT_DATE, 'YYYYMMDD') IS NULL THEN 'Invalid calendar Enrollment_Date'
-            WHEN s.LAST_FLIGHT_DATE IS NOT NULL AND TRY_TO_DATE(s.LAST_FLIGHT_DATE, 'YYYYMMDD') IS NULL THEN 'Invalid Last_Flight_Date: unparseable calendar date'
-            WHEN LENGTH(s.MEMBER_ID) > 18 THEN 'Member_Id exceeds 18 characters'
-            WHEN s.COUNTRY IS NULL THEN 'Unmapped country: Country is required and cannot be empty'
-            WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
-            WHEN m.CANONICAL_CODE IS NULL THEN 'Unmapped country'
-            WHEN s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5 THEN 'State exceeds 5 characters'
-            WHEN s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5) THEN 'Invalid Post_Code: must be numeric up to 5 digits'
-            WHEN s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV') THEN 'Invalid domain value: Tier_Code not in (PLT, GLD, SLV)'
-            WHEN s.IS_ACTIVE IS NOT NULL AND s.IS_ACTIVE NOT IN ('A', 'I') THEN 'Invalid domain value: Is_Active must be in (A, I)'
-            ELSE 'Validation constraint failure'
-        END AS ERROR_REASON,
-        s.SOURCE_FILE_NAME AS SOURCE_FEED
-    FROM SanitizedLanding s
-    LEFT JOIN REF_COUNTRY_MAP m ON s.COUNTRY = m.COUNTRY_CODE
-    WHERE s.RECORD_TYPE = 'D'
-      AND (
-          s.MEMBER_ID IS NULL
-          OR s.MEMBER_NAME IS NULL
-          OR s.ENROLLMENT_DATE IS NULL
-          OR TRY_TO_DATE(s.ENROLLMENT_DATE, 'YYYYMMDD') IS NULL
-          OR (s.LAST_FLIGHT_DATE IS NOT NULL AND TRY_TO_DATE(s.LAST_FLIGHT_DATE, 'YYYYMMDD') IS NULL)
-          OR LENGTH(s.MEMBER_ID) > 18
-          OR s.COUNTRY IS NULL
-          OR LENGTH(s.COUNTRY) > 5
-          OR m.CANONICAL_CODE IS NULL
-          OR (s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5)
-          OR (s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5))
-          OR (s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV'))
-          OR (s.IS_ACTIVE IS NOT NULL AND s.IS_ACTIVE NOT IN ('A', 'I'))
-      )
-) src
-ON target.RECORD_ID = src.RECORD_ID
-AND target.ERROR_REASON = src.ERROR_REASON
-AND target.SOURCE_FEED = src.SOURCE_FEED
-WHEN NOT MATCHED THEN
-    INSERT (RECORD_ID, RAW_RECORD, ERROR_REASON, SOURCE_FEED, QUARANTINED_AT)
-    VALUES (src.RECORD_ID, src.RAW_RECORD, src.ERROR_REASON, src.SOURCE_FEED, CURRENT_TIMESTAMP());
+        RECORD_TYPE,
+        COALESCE(CASE WHEN NULLIF(TRIM(SOURCE_SYSTEM), '') IS NULL OR UPPER(TRIM(SOURCE_SYSTEM)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(SOURCE_SYSTEM) END, 'FLAT_FILE') AS SOURCE_SYSTEM,
+        CASE WHEN NULLIF(TRIM(MEMBER_ID), '') IS NULL OR UPPER(TRIM(MEMBER_ID)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(MEMBER_ID) END AS MEMBER_ID,
+        CASE WHEN NULLIF(TRIM(MEMBER_NAME), '') IS NULL OR UPPER(TRIM(MEMBER_NAME)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(MEMBER_NAME) END AS MEMBER_NAME,
+        CASE WHEN NULLIF(TRIM(ENROLLMENT_DATE), '') IS NULL OR UPPER(TRIM(ENROLLMENT_DATE)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(ENROLLMENT_DATE) END AS ENROLLMENT_DATE,
+        CASE WHEN NULLIF(TRIM(LAST_FLIGHT_DATE), '') IS NULL OR UPPER(TRIM(LAST_FLIGHT_DATE)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(LAST_FLIGHT_DATE) END AS LAST_FLIGHT_DATE,
+        CASE WHEN NULLIF(TRIM(TIER_CODE), '') IS NULL OR UPPER(TRIM(TIER_CODE)) IN ('NULL', 'NONE') THEN NULL ELSE UPPER(TRIM(TIER_CODE)) END AS TIER_CODE,
+        CASE WHEN NULLIF(TRIM(AGENT_NAME), '') IS NULL OR UPPER(TRIM(AGENT_NAME)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(AGENT_NAME) END AS AGENT_NAME,
+        CASE WHEN NULLIF(TRIM(STATE), '') IS NULL OR UPPER(TRIM(STATE)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(STATE) END AS STATE,
+        CASE WHEN NULLIF(TRIM(COUNTRY), '') IS NULL OR UPPER(TRIM(COUNTRY)) IN ('NULL', 'NONE') THEN NULL ELSE UPPER(TRIM(COUNTRY)) END AS COUNTRY,
+        CASE WHEN NULLIF(TRIM(POST_CODE), '') IS NULL OR UPPER(TRIM(POST_CODE)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(POST_CODE) END AS POST_CODE,
+        CASE WHEN NULLIF(TRIM(DOB), '') IS NULL OR UPPER(TRIM(DOB)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(DOB) END AS DOB,
+        CASE WHEN NULLIF(TRIM(IS_ACTIVE), '') IS NULL OR UPPER(TRIM(IS_ACTIVE)) IN ('NULL', 'NONE') THEN NULL ELSE UPPER(TRIM(IS_ACTIVE)) END AS IS_ACTIVE,
+        SOURCE_FILE_NAME,
+        INGESTED_AT
+    FROM RAW_MEMBER_LANDING
+    WHERE PROCESSED_AT IS NULL
+)
+SELECT
+    COALESCE(s.MEMBER_ID, 'UNKNOWN_ID') AS RECORD_ID,
+    CONCAT_WS('|', s.RECORD_TYPE, s.SOURCE_SYSTEM, s.MEMBER_NAME, s.MEMBER_ID, s.ENROLLMENT_DATE, s.LAST_FLIGHT_DATE, s.TIER_CODE, s.AGENT_NAME, s.STATE, s.COUNTRY, s.DOB, s.IS_ACTIVE) AS RAW_RECORD,
+    SHA2(CONCAT_WS('|', s.RECORD_TYPE, s.SOURCE_SYSTEM, s.MEMBER_NAME, s.MEMBER_ID, s.ENROLLMENT_DATE, s.LAST_FLIGHT_DATE, s.TIER_CODE, s.AGENT_NAME, s.STATE, s.COUNTRY, s.DOB, s.IS_ACTIVE), 256) AS RAW_RECORD_HASH,
+    CASE
+        WHEN s.MEMBER_ID IS NULL THEN 'Missing mandatory Member_Id'
+        WHEN s.MEMBER_NAME IS NULL THEN 'Missing mandatory Member_Name'
+        WHEN s.ENROLLMENT_DATE IS NULL THEN 'Missing mandatory Enrollment_Date'
+        WHEN TRY_TO_DATE(s.ENROLLMENT_DATE, 'YYYYMMDD') IS NULL THEN 'Invalid calendar Enrollment_Date'
+        WHEN s.LAST_FLIGHT_DATE IS NOT NULL AND TRY_TO_DATE(s.LAST_FLIGHT_DATE, 'YYYYMMDD') IS NULL THEN 'Invalid Last_Flight_Date: unparseable calendar date'
+        WHEN s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL THEN 'Invalid DOB: unparseable calendar date'
+        WHEN LENGTH(s.MEMBER_ID) > 18 THEN 'Member_Id exceeds 18 characters'
+        WHEN s.COUNTRY IS NULL THEN 'Unmapped country: Country is required and cannot be empty'
+        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
+        WHEN m.CANONICAL_CODE IS NULL THEN 'Unmapped country'
+        WHEN s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5 THEN 'State exceeds 5 characters'
+        WHEN s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5) THEN 'Invalid Post_Code: must be numeric up to 5 digits'
+        WHEN s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV') THEN 'Invalid domain value: Tier_Code not in (PLT, GLD, SLV)'
+        WHEN s.IS_ACTIVE IS NOT NULL AND s.IS_ACTIVE NOT IN ('A', 'I') THEN 'Invalid domain value: Is_Active must be in (A, I)'
+        ELSE 'Validation constraint failure'
+    END AS ERROR_REASON,
+    s.SOURCE_FILE_NAME AS SOURCE_FEED,
+    s.SOURCE_SYSTEM AS SOURCE_SYSTEM,
+    s.SOURCE_FILE_NAME AS SOURCE_FILE_NAME,
+    $run_batch_id AS BATCH_ID,
+    CURRENT_TIMESTAMP() AS QUARANTINED_AT
+FROM SanitizedLanding s
+LEFT JOIN REF_COUNTRY_MAP m ON s.COUNTRY = m.COUNTRY_CODE
+WHERE s.RECORD_TYPE = 'D'
+  AND (
+      s.MEMBER_ID IS NULL
+      OR s.MEMBER_NAME IS NULL
+      OR s.ENROLLMENT_DATE IS NULL
+      OR TRY_TO_DATE(s.ENROLLMENT_DATE, 'YYYYMMDD') IS NULL
+      OR (s.LAST_FLIGHT_DATE IS NOT NULL AND TRY_TO_DATE(s.LAST_FLIGHT_DATE, 'YYYYMMDD') IS NULL)
+      OR (s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL)
+      OR LENGTH(s.MEMBER_ID) > 18
+      OR s.COUNTRY IS NULL
+      OR LENGTH(s.COUNTRY) > 5
+      OR m.CANONICAL_CODE IS NULL
+      OR (s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5)
+      OR (s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5))
+      OR (s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV'))
+      OR (s.IS_ACTIVE IS NOT NULL AND s.IS_ACTIVE NOT IN ('A', 'I'))
+  );
 
 
 -- ----------------------------------------------------------------------------
@@ -110,6 +125,8 @@ INSERT INTO STG_MEMBER_PROFILE (
     AGE,
     STALE_MEMBER,
     SOURCE_FILE_NAME,
+    EXTRACT_DATE,
+    LINE_NO,
     INGESTED_AT
 )
 WITH SanitizedLanding AS (
@@ -128,6 +145,8 @@ WITH SanitizedLanding AS (
         CASE WHEN NULLIF(TRIM(DOB), '') IS NULL OR UPPER(TRIM(DOB)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(DOB) END AS DOB,
         CASE WHEN NULLIF(TRIM(IS_ACTIVE), '') IS NULL OR UPPER(TRIM(IS_ACTIVE)) IN ('NULL', 'NONE') THEN NULL ELSE UPPER(TRIM(IS_ACTIVE)) END AS IS_ACTIVE,
         SOURCE_FILE_NAME,
+        COALESCE(EXTRACT_DATE, TRY_TO_DATE(REGEXP_SUBSTR(SOURCE_FILE_NAME, '[0-9]{8}'), 'YYYYMMDD'), INGESTED_AT::DATE, CURRENT_DATE()) AS EXTRACT_DATE,
+        LINE_NO,
         INGESTED_AT
     FROM RAW_MEMBER_LANDING
     WHERE PROCESSED_AT IS NULL
@@ -165,6 +184,8 @@ SELECT
         ELSE 'N'
     END AS STALE_MEMBER,
     s.SOURCE_FILE_NAME,
+    s.EXTRACT_DATE,
+    s.LINE_NO,
     CURRENT_TIMESTAMP() AS INGESTED_AT
 FROM SanitizedLanding s
 JOIN REF_COUNTRY_MAP m ON s.COUNTRY = m.COUNTRY_CODE
@@ -173,6 +194,7 @@ WHERE s.RECORD_TYPE = 'D'
   AND s.MEMBER_NAME IS NOT NULL
   AND TRY_TO_DATE(s.ENROLLMENT_DATE, 'YYYYMMDD') IS NOT NULL
   AND (s.LAST_FLIGHT_DATE IS NULL OR TRY_TO_DATE(s.LAST_FLIGHT_DATE, 'YYYYMMDD') IS NOT NULL)
+  AND (s.DOB IS NULL OR TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NOT NULL)
   AND LENGTH(s.MEMBER_ID) <= 18
   AND s.COUNTRY IS NOT NULL
   AND LENGTH(s.COUNTRY) <= 5
@@ -185,11 +207,12 @@ WHERE s.RECORD_TYPE = 'D'
 
 -- ----------------------------------------------------------------------------
 -- STEP 2B: Collision Resolution (Renames & Key Collisions)
--- Detects (SOURCE_SYSTEM, MEMBER_ID) groups with differing names where at least
--- one record was introduced in the current batch.
--- Identifies the row with the latest COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE),
--- tie-breaking on INGESTED_AT DESC, STG_ROW_ID, and idempotently quarantines
--- older conflicting rows to RAW_DLQ_QUARANTINE.
+-- Detects (SOURCE_SYSTEM, MEMBER_ID) groups with differing names INSIDE the
+-- current batch (BATCH_ID = $run_batch_id). A rename across distinct batches
+-- is treated as a normal update without DLQ rejection.
+-- Identifies the row with the latest EXTRACT_DATE DESC, then
+-- COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, tie-breaking on INGESTED_AT DESC,
+-- LINE_NO DESC, and idempotently quarantines older conflicting rows to RAW_DLQ_QUARANTINE.
 -- NOTE: We do not run a DELETE on STG_MEMBER_PROFILE here because:
 --   1) Matching on (SOURCE_SYSTEM, MEMBER_ID, INGESTED_AT) deletes BOTH the winner
 --      and loser since Snowflake's CURRENT_TIMESTAMP() is identical within a batch.
@@ -198,43 +221,53 @@ WHERE s.RECORD_TYPE = 'D'
 -- ----------------------------------------------------------------------------
 MERGE INTO RAW_DLQ_QUARANTINE target
 USING (
-    WITH MultiNameGroups AS (
-        SELECT SOURCE_SYSTEM, MEMBER_ID
+    WITH CurrentBatchMembers AS (
+        SELECT *
         FROM STG_MEMBER_PROFILE
+        WHERE BATCH_ID = $run_batch_id
+    ),
+    MultiNameGroups AS (
+        SELECT SOURCE_SYSTEM, MEMBER_ID
+        FROM CurrentBatchMembers
         GROUP BY SOURCE_SYSTEM, MEMBER_ID
-        HAVING COUNT(CASE WHEN BATCH_ID = $run_batch_id THEN 1 END) > 0
-           AND COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1
+        HAVING COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1
     ),
     RankedCollisions AS (
         SELECT
             s.*,
             ROW_NUMBER() OVER (
                 PARTITION BY s.SOURCE_SYSTEM, s.MEMBER_ID
-                ORDER BY COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.STG_ROW_ID
+                ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.LINE_NO DESC
             ) AS RN
-        FROM STG_MEMBER_PROFILE s
+        FROM CurrentBatchMembers s
         JOIN MultiNameGroups g ON s.SOURCE_SYSTEM = g.SOURCE_SYSTEM AND s.MEMBER_ID = g.MEMBER_ID
     )
     SELECT
         MEMBER_ID AS RECORD_ID,
         CONCAT_WS('|', SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE) AS RAW_RECORD,
+        SHA2(CONCAT_WS('|', SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE), 256) AS RAW_RECORD_HASH,
         'Key collision: superseded by newer record' AS ERROR_REASON,
-        'STG_MEMBER_PROFILE' AS SOURCE_FEED
+        'STG_MEMBER_PROFILE' AS SOURCE_FEED,
+        SOURCE_SYSTEM,
+        SOURCE_FILE_NAME,
+        $run_batch_id AS BATCH_ID
     FROM RankedCollisions
     WHERE RN > 1
 ) src
 ON target.RECORD_ID = src.RECORD_ID
 AND target.ERROR_REASON = src.ERROR_REASON
 AND target.SOURCE_FEED = src.SOURCE_FEED
+AND target.RAW_RECORD_HASH = src.RAW_RECORD_HASH
 WHEN NOT MATCHED THEN
-    INSERT (RECORD_ID, RAW_RECORD, ERROR_REASON, SOURCE_FEED, QUARANTINED_AT)
-    VALUES (src.RECORD_ID, src.RAW_RECORD, src.ERROR_REASON, src.SOURCE_FEED, CURRENT_TIMESTAMP());
+    INSERT (RECORD_ID, RAW_RECORD, RAW_RECORD_HASH, ERROR_REASON, SOURCE_FEED, SOURCE_SYSTEM, SOURCE_FILE_NAME, BATCH_ID, QUARANTINED_AT)
+    VALUES (src.RECORD_ID, src.RAW_RECORD, src.RAW_RECORD_HASH, src.ERROR_REASON, src.SOURCE_FEED, src.SOURCE_SYSTEM, src.SOURCE_FILE_NAME, src.BATCH_ID, CURRENT_TIMESTAMP());
 
 
 -- ----------------------------------------------------------------------------
 -- STEP 3: "Latest Record Wins" Transformation & Full Per-Country Split
 -- Covers all 5 target countries: IND, USA, CAN, PHIL, AU
--- Tie-breaks with STG_ROW_ID for deterministic resolution within a run.
+-- Prioritizes EXTRACT_DATE DESC, then COALESCE(flight, enrollment) DESC,
+-- tie-breaking with LINE_NO DESC for deterministic resolution.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TEMPORARY TABLE DEDUPED_LATEST_MEMBERS AS
 WITH RankedMembers AS (
@@ -248,20 +281,43 @@ WITH RankedMembers AS (
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
         SOURCE_FILE_NAME,
+        EXTRACT_DATE,
+        LINE_NO,
         INGESTED_AT,
         STG_ROW_ID,
         ROW_NUMBER() OVER (
             PARTITION BY SOURCE_SYSTEM, MEMBER_ID 
-            ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, STG_ROW_ID
+            ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, LINE_NO DESC
         ) AS RN
     FROM STG_MEMBER_PROFILE
+    WHERE BATCH_ID = $run_batch_id
 )
-SELECT * EXCLUDE (RN)
+SELECT
+    SOURCE_SYSTEM,
+    MEMBER_ID,
+    MEMBER_NAME,
+    ENROLLMENT_DATE,
+    LAST_FLIGHT_DATE,
+    TIER_CODE,
+    AGENT_NAME,
+    STATE,
+    COUNTRY,
+    POST_CODE,
+    DOB,
+    IS_ACTIVE,
+    AGE,
+    STALE_MEMBER,
+    SOURCE_FILE_NAME,
+    EXTRACT_DATE,
+    LINE_NO,
+    INGESTED_AT,
+    STG_ROW_ID
 FROM RankedMembers
 WHERE RN = 1;
 
@@ -282,53 +338,61 @@ WHERE RN = 1;
 -- STEP 4: Parse Semi-Structured JSON Feed & Flatten into Queryable Table
 -- ----------------------------------------------------------------------------
 
--- 1. Idempotently quarantine malformed or negative transactions to RAW_DLQ_QUARANTINE
-MERGE INTO RAW_DLQ_QUARANTINE target
-USING (
-    SELECT
-        COALESCE(r.value:txn_id::STRING, 'UNKNOWN_TXN') AS RECORD_ID,
-        r.value::STRING AS RAW_RECORD,
-        CASE
-            WHEN raw.FEED_PAYLOAD:feed_date IS NULL
-                 OR NULLIF(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), '') IS NULL
-                 OR TRY_TO_DATE(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), 'YYYYMMDD') IS NULL
-            THEN 'Invalid feed_date in redemption feed'
-            WHEN raw.FEED_PAYLOAD:member_id IS NULL OR NULLIF(TRIM(raw.FEED_PAYLOAD:member_id::STRING), '') IS NULL THEN 'Missing mandatory member_id in redemption feed'
-            WHEN r.value:txn_id IS NULL OR NULLIF(TRIM(r.value:txn_id::STRING), '') IS NULL THEN 'Missing mandatory transaction txn_id'
-            WHEN r.value:txn_date IS NULL OR NULLIF(TRIM(r.value:txn_date::STRING), '') IS NULL THEN 'Missing mandatory transaction txn_date'
-            WHEN TRY_TO_DATE(r.value:txn_date::STRING, 'YYYYMMDD') IS NULL THEN 'Invalid txn_date: unparseable calendar date'
-            WHEN r.value:miles_redeemed IS NULL THEN 'Missing mandatory miles_redeemed'
-            WHEN TRY_TO_NUMBER(r.value:miles_redeemed::STRING) IS NULL THEN 'Invalid miles_redeemed data type: non-numeric'
-            WHEN r.value:miles_redeemed::INTEGER < 0 THEN 'Invalid miles_redeemed: value cannot be negative'
-            WHEN r.value:partner IS NULL OR NULLIF(TRIM(r.value:partner::STRING), '') IS NULL THEN 'Missing mandatory partner airline name'
-            WHEN r.value:status IS NULL OR NULLIF(TRIM(r.value:status::STRING), '') IS NULL THEN 'Missing mandatory transaction status'
-            ELSE 'Redemption validation failure'
-        END AS ERROR_REASON,
-        'RAW_REDEMPTIONS_LANDING' AS SOURCE_FEED
-    FROM RAW_REDEMPTIONS_LANDING raw,
-    LATERAL FLATTEN(input => raw.FEED_PAYLOAD:redemptions) r
-    WHERE raw.PROCESSED_AT IS NULL
-      AND (
-          raw.FEED_PAYLOAD:feed_date IS NULL
-          OR NULLIF(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), '') IS NULL
-          OR TRY_TO_DATE(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), 'YYYYMMDD') IS NULL
-          OR raw.FEED_PAYLOAD:member_id IS NULL OR NULLIF(TRIM(raw.FEED_PAYLOAD:member_id::STRING), '') IS NULL
-          OR r.value:txn_id IS NULL OR NULLIF(TRIM(r.value:txn_id::STRING), '') IS NULL
-          OR r.value:txn_date IS NULL OR NULLIF(TRIM(r.value:txn_date::STRING), '') IS NULL
-          OR TRY_TO_DATE(r.value:txn_date::STRING, 'YYYYMMDD') IS NULL
-          OR r.value:miles_redeemed IS NULL
-          OR TRY_TO_NUMBER(r.value:miles_redeemed::STRING) IS NULL
-          OR r.value:miles_redeemed::INTEGER < 0
-          OR r.value:partner IS NULL OR NULLIF(TRIM(r.value:partner::STRING), '') IS NULL
-          OR r.value:status IS NULL OR NULLIF(TRIM(r.value:status::STRING), '') IS NULL
-      )
-) src
-ON target.RECORD_ID = src.RECORD_ID
-AND target.ERROR_REASON = src.ERROR_REASON
-AND target.SOURCE_FEED = src.SOURCE_FEED
-WHEN NOT MATCHED THEN
-    INSERT (RECORD_ID, RAW_RECORD, ERROR_REASON, SOURCE_FEED, QUARANTINED_AT)
-    VALUES (src.RECORD_ID, src.RAW_RECORD, src.ERROR_REASON, src.SOURCE_FEED, CURRENT_TIMESTAMP());
+-- 1. Quarantine malformed or negative transactions to RAW_DLQ_QUARANTINE
+-- Plain INSERT with BATCH_ID and RAW_RECORD_HASH; landing PROCESSED_AT ensures idempotency.
+INSERT INTO RAW_DLQ_QUARANTINE (
+    RECORD_ID,
+    RAW_RECORD,
+    RAW_RECORD_HASH,
+    ERROR_REASON,
+    SOURCE_FEED,
+    SOURCE_SYSTEM,
+    SOURCE_FILE_NAME,
+    BATCH_ID,
+    QUARANTINED_AT
+)
+SELECT
+    COALESCE(r.value:txn_id::STRING, 'UNKNOWN_TXN') AS RECORD_ID,
+    r.value::STRING AS RAW_RECORD,
+    SHA2(r.value::STRING, 256) AS RAW_RECORD_HASH,
+    CASE
+        WHEN raw.FEED_PAYLOAD:feed_date IS NULL
+             OR NULLIF(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), '') IS NULL
+             OR TRY_TO_DATE(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), 'YYYYMMDD') IS NULL
+        THEN 'Invalid feed_date in redemption feed'
+        WHEN raw.FEED_PAYLOAD:member_id IS NULL OR NULLIF(TRIM(raw.FEED_PAYLOAD:member_id::STRING), '') IS NULL THEN 'Missing mandatory member_id in redemption feed'
+        WHEN r.value:txn_id IS NULL OR NULLIF(TRIM(r.value:txn_id::STRING), '') IS NULL THEN 'Missing mandatory transaction txn_id'
+        WHEN r.value:txn_date IS NULL OR NULLIF(TRIM(r.value:txn_date::STRING), '') IS NULL THEN 'Missing mandatory transaction txn_date'
+        WHEN TRY_TO_DATE(r.value:txn_date::STRING, 'YYYYMMDD') IS NULL THEN 'Invalid txn_date: unparseable calendar date'
+        WHEN r.value:miles_redeemed IS NULL THEN 'Missing mandatory miles_redeemed'
+        WHEN TRY_TO_NUMBER(r.value:miles_redeemed::STRING) IS NULL THEN 'Invalid miles_redeemed data type: non-numeric'
+        WHEN TRY_TO_NUMBER(r.value:miles_redeemed::STRING) < 0 THEN 'Invalid miles_redeemed: value cannot be negative'
+        WHEN r.value:partner IS NULL OR NULLIF(TRIM(r.value:partner::STRING), '') IS NULL THEN 'Missing mandatory partner airline name'
+        WHEN r.value:status IS NULL OR NULLIF(TRIM(r.value:status::STRING), '') IS NULL THEN 'Missing mandatory transaction status'
+        ELSE 'Redemption validation failure'
+    END AS ERROR_REASON,
+    'RAW_REDEMPTIONS_LANDING' AS SOURCE_FEED,
+    'PARTNER_JSON' AS SOURCE_SYSTEM,
+    COALESCE(raw.FEED_DATE, 'redemptions_feed') AS SOURCE_FILE_NAME,
+    $run_batch_id AS BATCH_ID,
+    CURRENT_TIMESTAMP() AS QUARANTINED_AT
+FROM RAW_REDEMPTIONS_LANDING raw,
+LATERAL FLATTEN(input => raw.FEED_PAYLOAD:redemptions) r
+WHERE raw.PROCESSED_AT IS NULL
+  AND (
+      raw.FEED_PAYLOAD:feed_date IS NULL
+      OR NULLIF(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), '') IS NULL
+      OR TRY_TO_DATE(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), 'YYYYMMDD') IS NULL
+      OR raw.FEED_PAYLOAD:member_id IS NULL OR NULLIF(TRIM(raw.FEED_PAYLOAD:member_id::STRING), '') IS NULL
+      OR r.value:txn_id IS NULL OR NULLIF(TRIM(r.value:txn_id::STRING), '') IS NULL
+      OR r.value:txn_date IS NULL OR NULLIF(TRIM(r.value:txn_date::STRING), '') IS NULL
+      OR TRY_TO_DATE(r.value:txn_date::STRING, 'YYYYMMDD') IS NULL
+      OR r.value:miles_redeemed IS NULL
+      OR TRY_TO_NUMBER(r.value:miles_redeemed::STRING) IS NULL
+      OR TRY_TO_NUMBER(r.value:miles_redeemed::STRING) < 0
+      OR r.value:partner IS NULL OR NULLIF(TRIM(r.value:partner::STRING), '') IS NULL
+      OR r.value:status IS NULL OR NULLIF(TRIM(r.value:status::STRING), '') IS NULL
+  );
 
 -- 2. Idempotent MERGE into STG_REDEMPTIONS_FLATTENED on TXN_ID
 -- Note: Snowflake does not enforce PRIMARY KEY constraints; MERGE is essential for idempotency across reruns.
@@ -340,7 +404,7 @@ USING (
         TRY_TO_DATE(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), 'YYYYMMDD') AS FEED_DATE,
         TRY_TO_DATE(TRIM(r.value:txn_date::STRING), 'YYYYMMDD') AS TXN_DATE,
         TRIM(r.value:partner::STRING) AS PARTNER,
-        r.value:miles_redeemed::INTEGER AS MILES_REDEEMED,
+        TRY_TO_NUMBER(r.value:miles_redeemed::STRING) AS MILES_REDEEMED,
         UPPER(TRIM(r.value:status::STRING)) AS STATUS,
         $run_batch_id AS BATCH_ID
     FROM RAW_REDEMPTIONS_LANDING raw,
@@ -351,7 +415,7 @@ USING (
       AND raw.FEED_PAYLOAD:member_id IS NOT NULL AND NULLIF(TRIM(raw.FEED_PAYLOAD:member_id::STRING), '') IS NOT NULL
       AND r.value:txn_id IS NOT NULL AND NULLIF(TRIM(r.value:txn_id::STRING), '') IS NOT NULL
       AND r.value:txn_date IS NOT NULL AND TRY_TO_DATE(TRIM(r.value:txn_date::STRING), 'YYYYMMDD') IS NOT NULL
-      AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) IS NOT NULL AND r.value:miles_redeemed::INTEGER >= 0
+      AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) >= 0
       AND r.value:partner IS NOT NULL AND NULLIF(TRIM(r.value:partner::STRING), '') IS NOT NULL
       AND r.value:status IS NOT NULL AND NULLIF(TRIM(r.value:status::STRING), '') IS NOT NULL
 ) src
@@ -370,122 +434,3 @@ WHEN NOT MATCHED THEN
     INSERT (TXN_ID, MEMBER_ID, FEED_DATE, TXN_DATE, PARTNER, MILES_REDEEMED, STATUS, BATCH_ID, INGESTED_AT)
     VALUES (src.TXN_ID, src.MEMBER_ID, src.FEED_DATE, src.TXN_DATE, src.PARTNER, src.MILES_REDEEMED, src.STATUS, src.BATCH_ID, CURRENT_TIMESTAMP());
 
-
--- ----------------------------------------------------------------------------
--- STEP 5: Loyalty 360 Analytical Mart (Sums Only COMPLETED Miles)
--- ----------------------------------------------------------------------------
-
--- 1. Idempotently quarantine ambiguous redemptions whose MEMBER_ID spans multiple SOURCE_SYSTEMs
-MERGE INTO RAW_DLQ_QUARANTINE target
-USING (
-    SELECT
-        r.TXN_ID AS RECORD_ID,
-        CONCAT_WS('|', r.TXN_ID, r.MEMBER_ID, r.FEED_DATE, r.TXN_DATE, r.PARTNER, r.MILES_REDEEMED, r.STATUS) AS RAW_RECORD,
-        'Ambiguous member_id across source systems' AS ERROR_REASON,
-        'STG_REDEMPTIONS_FLATTENED' AS SOURCE_FEED
-    FROM STG_REDEMPTIONS_FLATTENED r
-    WHERE r.MEMBER_ID IN (
-        SELECT MEMBER_ID
-        FROM DEDUPED_LATEST_MEMBERS
-        GROUP BY MEMBER_ID
-        HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
-    )
-) src
-ON target.RECORD_ID = src.RECORD_ID
-AND target.ERROR_REASON = src.ERROR_REASON
-AND target.SOURCE_FEED = src.SOURCE_FEED
-WHEN NOT MATCHED THEN
-    INSERT (RECORD_ID, RAW_RECORD, ERROR_REASON, SOURCE_FEED, QUARANTINED_AT)
-    VALUES (src.RECORD_ID, src.RAW_RECORD, src.ERROR_REASON, src.SOURCE_FEED, CURRENT_TIMESTAMP());
-
-DELETE FROM STG_REDEMPTIONS_FLATTENED
-WHERE MEMBER_ID IN (
-    SELECT MEMBER_ID
-    FROM DEDUPED_LATEST_MEMBERS
-    GROUP BY MEMBER_ID
-    HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
-);
-
--- 2. Build or Refresh MEMBER_LOYALTY_360 Mart (Idempotent MERGE for affected members)
--- Keyed on (SOURCE_SYSTEM, MEMBER_ID) from MEMBERS_ALL; touches only members affected by this batch
-MERGE INTO MEMBER_LOYALTY_360 target
-USING (
-    WITH RedemptionSummary AS (
-        SELECT
-            MEMBER_ID,
-            COUNT(DISTINCT TXN_ID) AS TOTAL_REDEMPTIONS,
-            -- Sum only COMPLETED miles in total redeemed miles
-            COALESCE(SUM(CASE WHEN STATUS = 'COMPLETED' THEN MILES_REDEEMED ELSE 0 END), 0) AS TOTAL_MILES_REDEEMED,
-            COALESCE(SUM(CASE WHEN STATUS = 'PENDING' THEN MILES_REDEEMED ELSE 0 END), 0) AS PENDING_MILES_REDEEMED,
-            MAX(TXN_DATE) AS LAST_REDEMPTION_DATE,
-            MODE(PARTNER) AS TOP_PARTNER
-        FROM STG_REDEMPTIONS_FLATTENED
-        GROUP BY MEMBER_ID
-    )
-    SELECT
-        m.SOURCE_SYSTEM,
-        m.MEMBER_ID,
-        m.MEMBER_NAME,
-        m.COUNTRY,
-        m.TIER_CODE,
-        m.ENROLLMENT_DATE,
-        m.LAST_FLIGHT_DATE,
-        m.AGE,
-        m.STALE_MEMBER,
-        COALESCE(r.TOTAL_REDEMPTIONS, 0) AS TOTAL_REDEMPTIONS,
-        COALESCE(r.TOTAL_MILES_REDEEMED, 0) AS TOTAL_MILES_REDEEMED,
-        COALESCE(r.PENDING_MILES_REDEEMED, 0) AS PENDING_MILES_REDEEMED,
-        r.LAST_REDEMPTION_DATE,
-        COALESCE(r.TOP_PARTNER, 'None') AS TOP_PARTNER
-    FROM MEMBERS_ALL m
-    LEFT JOIN RedemptionSummary r ON m.MEMBER_ID = r.MEMBER_ID
-    WHERE EXISTS (
-        SELECT 1 FROM DEDUPED_LATEST_MEMBERS d
-        WHERE d.SOURCE_SYSTEM = m.SOURCE_SYSTEM AND d.MEMBER_ID = m.MEMBER_ID
-    )
-    OR EXISTS (
-        SELECT 1 FROM STG_REDEMPTIONS_FLATTENED red
-        WHERE red.MEMBER_ID = m.MEMBER_ID AND red.BATCH_ID = $run_batch_id
-    )
-) src
-ON target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID
-WHEN MATCHED THEN
-    UPDATE SET
-        target.MEMBER_NAME = src.MEMBER_NAME,
-        target.COUNTRY = src.COUNTRY,
-        target.TIER_CODE = src.TIER_CODE,
-        target.ENROLLMENT_DATE = src.ENROLLMENT_DATE,
-        target.LAST_FLIGHT_DATE = src.LAST_FLIGHT_DATE,
-        target.AGE = src.AGE,
-        target.STALE_MEMBER = src.STALE_MEMBER,
-        target.TOTAL_REDEMPTIONS = src.TOTAL_REDEMPTIONS,
-        target.TOTAL_MILES_REDEEMED = src.TOTAL_MILES_REDEEMED,
-        target.PENDING_MILES_REDEEMED = src.PENDING_MILES_REDEEMED,
-        target.LAST_REDEMPTION_DATE = src.LAST_REDEMPTION_DATE,
-        target.TOP_PARTNER = src.TOP_PARTNER,
-        target.LAST_SYNC_AT = CURRENT_TIMESTAMP()
-WHEN NOT MATCHED THEN
-    INSERT (
-        SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, COUNTRY, TIER_CODE,
-        ENROLLMENT_DATE, LAST_FLIGHT_DATE, AGE, STALE_MEMBER,
-        TOTAL_REDEMPTIONS, TOTAL_MILES_REDEEMED, PENDING_MILES_REDEEMED,
-        LAST_REDEMPTION_DATE, TOP_PARTNER, LAST_SYNC_AT
-    )
-    VALUES (
-        src.SOURCE_SYSTEM, src.MEMBER_ID, src.MEMBER_NAME, src.COUNTRY, src.TIER_CODE,
-        src.ENROLLMENT_DATE, src.LAST_FLIGHT_DATE, src.AGE, src.STALE_MEMBER,
-        src.TOTAL_REDEMPTIONS, src.TOTAL_MILES_REDEEMED, src.PENDING_MILES_REDEEMED,
-        src.LAST_REDEMPTION_DATE, src.TOP_PARTNER, CURRENT_TIMESTAMP()
-    );
-
-
--- ----------------------------------------------------------------------------
--- STEP 6: Mark Processed Records in Landing Tables for Batch Tracking
--- ----------------------------------------------------------------------------
-UPDATE RAW_MEMBER_LANDING
-SET PROCESSED_AT = CURRENT_TIMESTAMP(), BATCH_ID = $run_batch_id
-WHERE PROCESSED_AT IS NULL;
-
-UPDATE RAW_REDEMPTIONS_LANDING
-SET PROCESSED_AT = CURRENT_TIMESTAMP(), BATCH_ID = $run_batch_id
-WHERE PROCESSED_AT IS NULL;

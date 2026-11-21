@@ -9,12 +9,47 @@
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_AU target
 USING (
-    SELECT *
-    FROM DEDUPED_LATEST_MEMBERS
-    WHERE COUNTRY = 'AU'
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
+    FROM DEDUPED_LATEST_MEMBERS src
+    WHERE src.COUNTRY = 'AU'
+      AND NOT EXISTS (
+          SELECT 1 FROM MEMBERS_ALL m
+          WHERE m.SOURCE_SYSTEM = src.SOURCE_SYSTEM
+            AND m.MEMBER_ID = src.MEMBER_ID
+            AND (
+                m.EXTRACT_DATE > src.EXTRACT_DATE
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                )
+            )
+      )
 ) src
 ON target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID
-WHEN MATCHED THEN
+WHEN MATCHED AND (
+    src.EXTRACT_DATE > target.EXTRACT_DATE
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR target.EXTRACT_DATE IS NULL
+) THEN
     UPDATE SET
         target.MEMBER_NAME = src.MEMBER_NAME,
         target.ENROLLMENT_DATE = src.ENROLLMENT_DATE,
@@ -23,10 +58,13 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -39,10 +77,13 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -55,14 +96,17 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_AU if latest country changed
+-- Cross-country migration: delete member from TABLE_AU if latest country changed and incoming is newer
 DELETE FROM TABLE_AU target
 WHERE EXISTS (
     SELECT 1
@@ -70,6 +114,14 @@ WHERE EXISTS (
     WHERE d.SOURCE_SYSTEM = target.SOURCE_SYSTEM
       AND d.MEMBER_ID = target.MEMBER_ID
       AND d.COUNTRY <> 'AU'
+      AND (
+          d.EXTRACT_DATE > target.EXTRACT_DATE
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR target.EXTRACT_DATE IS NULL
+      )
 );
 
 -- ----------------------------------------------------------------------------
@@ -77,12 +129,47 @@ WHERE EXISTS (
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_CAN target
 USING (
-    SELECT *
-    FROM DEDUPED_LATEST_MEMBERS
-    WHERE COUNTRY = 'CAN'
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
+    FROM DEDUPED_LATEST_MEMBERS src
+    WHERE src.COUNTRY = 'CAN'
+      AND NOT EXISTS (
+          SELECT 1 FROM MEMBERS_ALL m
+          WHERE m.SOURCE_SYSTEM = src.SOURCE_SYSTEM
+            AND m.MEMBER_ID = src.MEMBER_ID
+            AND (
+                m.EXTRACT_DATE > src.EXTRACT_DATE
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                )
+            )
+      )
 ) src
 ON target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID
-WHEN MATCHED THEN
+WHEN MATCHED AND (
+    src.EXTRACT_DATE > target.EXTRACT_DATE
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR target.EXTRACT_DATE IS NULL
+) THEN
     UPDATE SET
         target.MEMBER_NAME = src.MEMBER_NAME,
         target.ENROLLMENT_DATE = src.ENROLLMENT_DATE,
@@ -91,10 +178,13 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -107,10 +197,13 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -123,14 +216,17 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_CAN if latest country changed
+-- Cross-country migration: delete member from TABLE_CAN if latest country changed and incoming is newer
 DELETE FROM TABLE_CAN target
 WHERE EXISTS (
     SELECT 1
@@ -138,6 +234,14 @@ WHERE EXISTS (
     WHERE d.SOURCE_SYSTEM = target.SOURCE_SYSTEM
       AND d.MEMBER_ID = target.MEMBER_ID
       AND d.COUNTRY <> 'CAN'
+      AND (
+          d.EXTRACT_DATE > target.EXTRACT_DATE
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR target.EXTRACT_DATE IS NULL
+      )
 );
 
 -- ----------------------------------------------------------------------------
@@ -145,12 +249,47 @@ WHERE EXISTS (
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_INDIA target
 USING (
-    SELECT *
-    FROM DEDUPED_LATEST_MEMBERS
-    WHERE COUNTRY = 'IND'
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
+    FROM DEDUPED_LATEST_MEMBERS src
+    WHERE src.COUNTRY = 'IND'
+      AND NOT EXISTS (
+          SELECT 1 FROM MEMBERS_ALL m
+          WHERE m.SOURCE_SYSTEM = src.SOURCE_SYSTEM
+            AND m.MEMBER_ID = src.MEMBER_ID
+            AND (
+                m.EXTRACT_DATE > src.EXTRACT_DATE
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                )
+            )
+      )
 ) src
 ON target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID
-WHEN MATCHED THEN
+WHEN MATCHED AND (
+    src.EXTRACT_DATE > target.EXTRACT_DATE
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR target.EXTRACT_DATE IS NULL
+) THEN
     UPDATE SET
         target.MEMBER_NAME = src.MEMBER_NAME,
         target.ENROLLMENT_DATE = src.ENROLLMENT_DATE,
@@ -159,10 +298,13 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -175,10 +317,13 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -191,14 +336,17 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_INDIA if latest country changed
+-- Cross-country migration: delete member from TABLE_INDIA if latest country changed and incoming is newer
 DELETE FROM TABLE_INDIA target
 WHERE EXISTS (
     SELECT 1
@@ -206,6 +354,14 @@ WHERE EXISTS (
     WHERE d.SOURCE_SYSTEM = target.SOURCE_SYSTEM
       AND d.MEMBER_ID = target.MEMBER_ID
       AND d.COUNTRY <> 'IND'
+      AND (
+          d.EXTRACT_DATE > target.EXTRACT_DATE
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR target.EXTRACT_DATE IS NULL
+      )
 );
 
 -- ----------------------------------------------------------------------------
@@ -213,12 +369,47 @@ WHERE EXISTS (
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_PHIL target
 USING (
-    SELECT *
-    FROM DEDUPED_LATEST_MEMBERS
-    WHERE COUNTRY = 'PHIL'
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
+    FROM DEDUPED_LATEST_MEMBERS src
+    WHERE src.COUNTRY = 'PHIL'
+      AND NOT EXISTS (
+          SELECT 1 FROM MEMBERS_ALL m
+          WHERE m.SOURCE_SYSTEM = src.SOURCE_SYSTEM
+            AND m.MEMBER_ID = src.MEMBER_ID
+            AND (
+                m.EXTRACT_DATE > src.EXTRACT_DATE
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                )
+            )
+      )
 ) src
 ON target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID
-WHEN MATCHED THEN
+WHEN MATCHED AND (
+    src.EXTRACT_DATE > target.EXTRACT_DATE
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR target.EXTRACT_DATE IS NULL
+) THEN
     UPDATE SET
         target.MEMBER_NAME = src.MEMBER_NAME,
         target.ENROLLMENT_DATE = src.ENROLLMENT_DATE,
@@ -227,10 +418,13 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -243,10 +437,13 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -259,14 +456,17 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_PHIL if latest country changed
+-- Cross-country migration: delete member from TABLE_PHIL if latest country changed and incoming is newer
 DELETE FROM TABLE_PHIL target
 WHERE EXISTS (
     SELECT 1
@@ -274,6 +474,14 @@ WHERE EXISTS (
     WHERE d.SOURCE_SYSTEM = target.SOURCE_SYSTEM
       AND d.MEMBER_ID = target.MEMBER_ID
       AND d.COUNTRY <> 'PHIL'
+      AND (
+          d.EXTRACT_DATE > target.EXTRACT_DATE
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR target.EXTRACT_DATE IS NULL
+      )
 );
 
 -- ----------------------------------------------------------------------------
@@ -281,12 +489,47 @@ WHERE EXISTS (
 -- ----------------------------------------------------------------------------
 MERGE INTO TABLE_USA target
 USING (
-    SELECT *
-    FROM DEDUPED_LATEST_MEMBERS
-    WHERE COUNTRY = 'USA'
+    SELECT
+        SOURCE_SYSTEM,
+        MEMBER_ID,
+        MEMBER_NAME,
+        ENROLLMENT_DATE,
+        LAST_FLIGHT_DATE,
+        TIER_CODE,
+        AGENT_NAME,
+        STATE,
+        COUNTRY,
+        POST_CODE,
+        DOB,
+        IS_ACTIVE,
+        AGE,
+        STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO
+    FROM DEDUPED_LATEST_MEMBERS src
+    WHERE src.COUNTRY = 'USA'
+      AND NOT EXISTS (
+          SELECT 1 FROM MEMBERS_ALL m
+          WHERE m.SOURCE_SYSTEM = src.SOURCE_SYSTEM
+            AND m.MEMBER_ID = src.MEMBER_ID
+            AND (
+                m.EXTRACT_DATE > src.EXTRACT_DATE
+                OR (
+                    m.EXTRACT_DATE = src.EXTRACT_DATE
+                    AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) > COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
+                )
+            )
+      )
 ) src
 ON target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID
-WHEN MATCHED THEN
+WHEN MATCHED AND (
+    src.EXTRACT_DATE > target.EXTRACT_DATE
+    OR (
+        src.EXTRACT_DATE = target.EXTRACT_DATE
+        AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+    )
+    OR target.EXTRACT_DATE IS NULL
+) THEN
     UPDATE SET
         target.MEMBER_NAME = src.MEMBER_NAME,
         target.ENROLLMENT_DATE = src.ENROLLMENT_DATE,
@@ -295,10 +538,13 @@ WHEN MATCHED THEN
         target.AGENT_NAME = src.AGENT_NAME,
         target.STATE = src.STATE,
         target.COUNTRY = src.COUNTRY,
+        target.POST_CODE = src.POST_CODE,
         target.DOB = src.DOB,
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -311,10 +557,13 @@ WHEN NOT MATCHED THEN
         AGENT_NAME,
         STATE,
         COUNTRY,
+        POST_CODE,
         DOB,
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -327,14 +576,17 @@ WHEN NOT MATCHED THEN
         src.AGENT_NAME,
         src.STATE,
         src.COUNTRY,
+        src.POST_CODE,
         src.DOB,
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 
--- Cross-country migration: delete member from TABLE_USA if latest country changed
+-- Cross-country migration: delete member from TABLE_USA if latest country changed and incoming is newer
 DELETE FROM TABLE_USA target
 WHERE EXISTS (
     SELECT 1
@@ -342,5 +594,13 @@ WHERE EXISTS (
     WHERE d.SOURCE_SYSTEM = target.SOURCE_SYSTEM
       AND d.MEMBER_ID = target.MEMBER_ID
       AND d.COUNTRY <> 'USA'
+      AND (
+          d.EXTRACT_DATE > target.EXTRACT_DATE
+          OR (
+              d.EXTRACT_DATE = target.EXTRACT_DATE
+              AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) > COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
+          )
+          OR target.EXTRACT_DATE IS NULL
+      )
 );
 

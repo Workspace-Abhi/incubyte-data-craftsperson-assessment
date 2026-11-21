@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS RAW_MEMBER_LANDING (
     IS_ACTIVE            VARCHAR(10),
     POST_CODE            VARCHAR(50),
     SOURCE_FILE_NAME     VARCHAR(255),
+    EXTRACT_DATE         DATE,
+    LINE_NO              NUMBER,
     BATCH_ID             VARCHAR(50),
     PROCESSED_AT         TIMESTAMP_NTZ,
     INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -36,8 +38,12 @@ CREATE TABLE IF NOT EXISTS RAW_MEMBER_LANDING (
 CREATE TABLE IF NOT EXISTS RAW_DLQ_QUARANTINE (
     RECORD_ID            VARCHAR(50),
     RAW_RECORD           VARCHAR,
+    RAW_RECORD_HASH      VARCHAR(64),
     ERROR_REASON         VARCHAR(500),
     SOURCE_FEED          VARCHAR(255),
+    SOURCE_SYSTEM        VARCHAR(30),
+    SOURCE_FILE_NAME     VARCHAR(255),
+    BATCH_ID             VARCHAR(50),
     QUARANTINED_AT       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
@@ -63,14 +69,20 @@ CREATE TABLE IF NOT EXISTS STG_MEMBER_PROFILE (
     AGE                  INTEGER,         -- Derived: Exact calendar age
     STALE_MEMBER         VARCHAR(1),      -- Derived: 'Y' if days since Flight_Date > 90 else 'N'
     SOURCE_FILE_NAME     VARCHAR(255),
-    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
-    CONSTRAINT PK_STG_MEMBER PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID) RELY
+    EXTRACT_DATE         DATE,
+    LINE_NO              NUMBER,
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+    -- NOTE: Primary key constraints are removed from STG_MEMBER_PROFILE because staging
+    -- legitimately holds multiple records per key during ingestion prior to deduplication.
+    -- Snowflake does not enforce PRIMARY KEY constraints on country tables or marts.
 )
 CLUSTER BY (COUNTRY, ENROLLMENT_DATE);
 
 -- ----------------------------------------------------------------------------
 -- 3. COUNTRY-SPECIFIC TARGET TABLES
 -- Dedicated physical country tables clustered on MEMBER_ID
+-- NOTE: Primary key declarations are informational metadata; Snowflake does not
+-- enforce primary key uniqueness. Pipeline deduplication and MERGE logic enforce uniqueness.
 -- ----------------------------------------------------------------------------
 
 -- Table: India
@@ -84,10 +96,13 @@ CREATE TABLE IF NOT EXISTS TABLE_INDIA (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'IND',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
     STALE_MEMBER         VARCHAR(1),
+    EXTRACT_DATE         DATE,
+    LINE_NO              NUMBER,
     LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
     PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
 )
@@ -104,10 +119,13 @@ CREATE TABLE IF NOT EXISTS TABLE_USA (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'USA',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
     STALE_MEMBER         VARCHAR(1),
+    EXTRACT_DATE         DATE,
+    LINE_NO              NUMBER,
     LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
     PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
 )
@@ -124,10 +142,13 @@ CREATE TABLE IF NOT EXISTS TABLE_CAN (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'CAN',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
     STALE_MEMBER         VARCHAR(1),
+    EXTRACT_DATE         DATE,
+    LINE_NO              NUMBER,
     LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
     PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
 )
@@ -144,10 +165,13 @@ CREATE TABLE IF NOT EXISTS TABLE_PHIL (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'PHIL',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
     STALE_MEMBER         VARCHAR(1),
+    EXTRACT_DATE         DATE,
+    LINE_NO              NUMBER,
     LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
     PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
 )
@@ -164,10 +188,13 @@ CREATE TABLE IF NOT EXISTS TABLE_AU (
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'AU',
+    POST_CODE            NUMBER(5,0),
     DOB                  DATE,
     IS_ACTIVE            VARCHAR(1),
     AGE                  INTEGER,
     STALE_MEMBER         VARCHAR(1),
+    EXTRACT_DATE         DATE,
+    LINE_NO              NUMBER,
     LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
     PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
 )
@@ -203,17 +230,59 @@ WHEN NOT MATCHED THEN
 
 -- ----------------------------------------------------------------------------
 -- 4B. UNIFIED COUNTRY MEMBERS VIEW
+-- Explicit column list projected across all country tables
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW MEMBERS_ALL AS
-SELECT * FROM TABLE_INDIA
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_INDIA
 UNION ALL
-SELECT * FROM TABLE_USA
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_USA
 UNION ALL
-SELECT * FROM TABLE_CAN
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_CAN
 UNION ALL
-SELECT * FROM TABLE_PHIL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_PHIL
 UNION ALL
-SELECT * FROM TABLE_AU;
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_AU;
+
+-- ----------------------------------------------------------------------------
+-- 4C. DYNAMIC UNIFIED MEMBERS VIEW (Query-Time Recalculation)
+-- Dynamically recomputes AGE and STALE_MEMBER at query time relative to CURRENT_DATE()
+-- while preserving static stored attributes in the country tables.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL_CURRENT AS
+SELECT
+    SOURCE_SYSTEM,
+    MEMBER_ID,
+    MEMBER_NAME,
+    ENROLLMENT_DATE,
+    LAST_FLIGHT_DATE,
+    TIER_CODE,
+    AGENT_NAME,
+    STATE,
+    COUNTRY,
+    POST_CODE,
+    DOB,
+    IS_ACTIVE,
+    -- Dynamically recomputed exact calendar age at query time
+    CASE
+        WHEN DOB IS NULL THEN NULL
+        ELSE DATEDIFF(year, DOB, CURRENT_DATE()) - 
+             CASE 
+                WHEN (MONTH(CURRENT_DATE()) < MONTH(DOB)) 
+                  OR (MONTH(CURRENT_DATE()) = MONTH(DOB) 
+                      AND DAY(CURRENT_DATE()) < DAY(DOB)) 
+                THEN 1 ELSE 0 
+             END
+    END AS AGE,
+    -- Dynamically recomputed stale member flag at query time (>90 days since flight)
+    CASE 
+        WHEN LAST_FLIGHT_DATE IS NULL THEN 'Y'
+        WHEN DATEDIFF(day, LAST_FLIGHT_DATE, CURRENT_DATE()) > 90 THEN 'Y'
+        ELSE 'N'
+    END AS STALE_MEMBER,
+    EXTRACT_DATE,
+    LINE_NO,
+    LAST_UPDATED_AT
+FROM MEMBERS_ALL;
 
 -- ----------------------------------------------------------------------------
 -- 5. SEMI-STRUCTURED REDEMPTION TABLES
@@ -237,6 +306,7 @@ CREATE TABLE IF NOT EXISTS STG_REDEMPTIONS_FLATTENED (
     PARTNER              VARCHAR(100)     NOT NULL,
     MILES_REDEEMED       INTEGER          NOT NULL,
     STATUS               VARCHAR(50)      NOT NULL,
+    IS_AMBIGUOUS         BOOLEAN          DEFAULT FALSE,
     BATCH_ID             VARCHAR(50),
     INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
 )
