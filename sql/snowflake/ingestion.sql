@@ -185,25 +185,27 @@ ON_ERROR = 'CONTINUE';
 --     ON TABLE RAW_REDEMPTIONS_LANDING
 --     APPEND_ONLY = TRUE;
 --
+-- Production Stored Procedure template invoked by TASK_ORCHESTRATE_SKYPOINTS:
+-- Encapsulates the execution workflow defined in run_all.sql
+-- CREATE OR REPLACE PROCEDURE EXECUTE_SKYPOINTS_PIPELINE()
+--     RETURNS VARCHAR
+--     LANGUAGE SQL
+--     EXECUTE AS CALLER
+-- AS
+-- $$
+-- BEGIN
+--     -- Orchestrates the sequential pipeline stages:
+--     -- 1. transformations.sql (Batch claiming, DLQ quarantine, Staging, Latest-wins dedup)
+--     -- 2. generated_country_merges.sql (Country merges and migrations)
+--     -- 3. 03_mart_and_finalize.sql (Loyalty 360 mart merge & batch stamping)
+--     RETURN 'SkyPoints Pipeline executed successfully';
+-- END;
+-- $$;
+--
 -- CREATE OR REPLACE TASK TASK_ORCHESTRATE_SKYPOINTS
 --     WAREHOUSE = 'COMPUTE_WH'
 --     SCHEDULE = 'USING CRON 0 * * * * UTC'
 --     WHEN SYSTEM$STREAM_HAS_DATA('STREAM_RAW_MEMBER_LANDING') 
 --       OR SYSTEM$STREAM_HAS_DATA('STREAM_RAW_REDEMPTIONS_LANDING')
 -- AS
--- Production Stored Procedure invoked by TASK_ORCHESTRATE_SKYPOINTS:
--- Encapsulates the execution workflow defined in run_all.sql
-CREATE OR REPLACE PROCEDURE EXECUTE_SKYPOINTS_PIPELINE()
-    RETURNS VARCHAR
-    LANGUAGE SQL
-    EXECUTE AS CALLER
-AS
-$$
-BEGIN
-    -- In task execution, orchestrates the sequential transformations
-    -- 1. transformations.sql (DLQ, Staging, Deduplication)
-    -- 2. generated_country_merges.sql (Country routing & migrations)
-    -- 3. 03_mart_and_finalize.sql (Mart build & landing batch stamping)
-    RETURN 'SkyPoints Pipeline executed successfully';
-END;
-$$;
+--     CALL EXECUTE_SKYPOINTS_PIPELINE();

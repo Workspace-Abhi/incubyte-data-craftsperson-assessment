@@ -67,6 +67,7 @@ class CountryRouter:
         self.conn.execute(f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
                 source_system VARCHAR NOT NULL DEFAULT 'FLAT_FILE',
+                source_file VARCHAR,
                 member_id VARCHAR NOT NULL,
                 member_name VARCHAR NOT NULL,
                 enrollment_date DATE NOT NULL,
@@ -102,7 +103,7 @@ class CountryRouter:
                         PARTITION BY source_system, member_id
                         ORDER BY COALESCE(extract_date, DATE '1970-01-01') DESC,
                                  COALESCE(last_flight_date, enrollment_date) DESC,
-                                 ingested_at DESC,
+                                 COALESCE(source_file, '') DESC,
                                  COALESCE(line_no, 0) DESC
                     ) AS rn
                 FROM stg_member_profile
@@ -121,7 +122,7 @@ class CountryRouter:
         country_counts: Dict[str, int] = {}
 
         # View of all current records across country tables to prevent older late-arriving records from inserting
-        union_sql = " UNION ALL ".join([f"SELECT source_system, member_id, country, extract_date, last_flight_date, enrollment_date, line_no FROM {t}" for t in CANONICAL_TABLE_MAP.values()])
+        union_sql = " UNION ALL ".join([f"SELECT source_system, member_id, country, extract_date, last_flight_date, enrollment_date, source_file, line_no FROM {t}" for t in CANONICAL_TABLE_MAP.values()])
         self.conn.execute(f"CREATE OR REPLACE TEMP VIEW tmp_all_country_members AS {union_sql};")
 
         for (country_val,) in countries_df:
@@ -144,26 +145,37 @@ class CountryRouter:
                           OR (
                               COALESCE(src.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
                               AND COALESCE(src.last_flight_date, src.enrollment_date) = COALESCE(target.last_flight_date, target.enrollment_date)
-                              AND COALESCE(src.line_no, 0) >= COALESCE(target.line_no, 0)
+                              AND (
+                                  COALESCE(src.source_file, '') > COALESCE(target.source_file, '')
+                                  OR (
+                                      COALESCE(src.source_file, '') = COALESCE(target.source_file, '')
+                                      AND COALESCE(src.line_no, 0) >= COALESCE(target.line_no, 0)
+                                  )
+                              )
                           )
                           OR target.extract_date IS NULL
                       )
                 );
             """, [country_val])
 
-            # Insert incoming record if it does not already exist in any country table with a newer date or higher line_no tie
+            # Insert incoming record if it does not already exist in target_table or any country table with a strictly newer record
             self.conn.execute(f"""
                 INSERT INTO {target_table} (
-                    source_system, member_id, member_name, enrollment_date, last_flight_date,
+                    source_system, source_file, member_id, member_name, enrollment_date, last_flight_date,
                     tier_code, agent_name, state, country, post_code, dob,
                     is_active, age, stale_member, extract_date, line_no, last_updated_at
                 )
                 SELECT
-                    src.source_system, src.member_id, src.member_name, src.enrollment_date, src.last_flight_date,
+                    src.source_system, src.source_file, src.member_id, src.member_name, src.enrollment_date, src.last_flight_date,
                     src.tier_code, src.agent_name, src.state, src.country, src.post_code, src.dob,
                     src.is_active, src.age, src.stale_member, src.extract_date, src.line_no, CURRENT_TIMESTAMP
                 FROM tmp_latest_members src
                 WHERE src.country = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {target_table} t
+                      WHERE t.source_system = src.source_system
+                        AND t.member_id = src.member_id
+                  )
                   AND NOT EXISTS (
                       SELECT 1 FROM tmp_all_country_members existing
                       WHERE existing.source_system = src.source_system
@@ -177,7 +189,13 @@ class CountryRouter:
                             OR (
                                 COALESCE(existing.extract_date, DATE '1970-01-01') = COALESCE(src.extract_date, DATE '1970-01-01')
                                 AND COALESCE(existing.last_flight_date, existing.enrollment_date) = COALESCE(src.last_flight_date, src.enrollment_date)
-                                AND COALESCE(existing.line_no, 0) >= COALESCE(src.line_no, 0)
+                                AND (
+                                    COALESCE(existing.source_file, '') > COALESCE(src.source_file, '')
+                                    OR (
+                                        COALESCE(existing.source_file, '') = COALESCE(src.source_file, '')
+                                        AND COALESCE(existing.line_no, 0) > COALESCE(src.line_no, 0)
+                                    )
+                                )
                                 AND existing.country <> src.country
                             )
                         )
@@ -213,7 +231,13 @@ class CountryRouter:
                           OR (
                               COALESCE(d.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
                               AND COALESCE(d.last_flight_date, d.enrollment_date) = COALESCE(target.last_flight_date, target.enrollment_date)
-                              AND COALESCE(d.line_no, 0) >= COALESCE(target.line_no, 0)
+                              AND (
+                                  COALESCE(d.source_file, '') > COALESCE(target.source_file, '')
+                                  OR (
+                                      COALESCE(d.source_file, '') = COALESCE(target.source_file, '')
+                                      AND COALESCE(d.line_no, 0) >= COALESCE(target.line_no, 0)
+                                  )
+                              )
                           )
                           OR target.extract_date IS NULL
                       )

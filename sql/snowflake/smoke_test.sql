@@ -38,51 +38,64 @@ INSERT INTO TABLE_USA (
     'GLD', 'AgentA', 'CA', 'USA', 90210, DATE '1985-05-03', 'A', 38, 'Y', DATE '2023-01-01'
 );
 
+-- Interrupted batch fixture: simulates an interrupted run that claimed rows with an old BATCH_ID but failed before PROCESSED_AT was stamped
+INSERT INTO RAW_MEMBER_LANDING (
+    RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME, LINE_NO, BATCH_ID
+) VALUES
+('D', 'FLAT_FILE', 'INTERRUPT_1', 'Orphan Recovered', '20220101', '20230101', 'GLD', 'AgentInt', 'CA', 'USA', '01011990', 'A', '90210', 'batch_int.dat', 1, 'ORPHAN_BATCH_999');
+
 -- Member landing fixtures covering all test scenarios (loaded in a single batch)
 INSERT INTO RAW_MEMBER_LANDING (
     RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
-    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME, LINE_NO
 ) VALUES
 -- 1. Member MOVE_101 moving country to IND with lower flight date (20210501) but newer extract date (20240115)
-('D', 'FLAT_FILE', 'MOVE_101', 'David Miller', '20200101', '20210501', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'today_batch_20240115.dat'),
+('D', 'FLAT_FILE', 'MOVE_101', 'David Miller', '20200101', '20210501', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'today_batch_20240115.dat', 1),
 
 -- 2. Same raw ID 'DUP_1' across two distinct source systems
-('D', 'IND_SYS', 'DUP_1', 'Vikas Patel', '20220101', '20230615', 'SLV', 'AgentB', 'DL', 'IND', '15081995', 'A', '11001', 'IND.csv'),
-('D', 'USA_SYS', 'DUP_1', 'Sam Wilson', '20220101', '20230720', 'PLT', 'AgentC', 'NY', 'USA', '20101990', 'A', '10001', 'USA.csv'),
+('D', 'IND_SYS', 'DUP_1', 'Vikas Patel', '20220101', '20230615', 'SLV', 'AgentB', 'DL', 'IND', '15081995', 'A', '11001', 'IND.csv', 1),
+('D', 'USA_SYS', 'DUP_1', 'Sam Wilson', '20220101', '20230720', 'PLT', 'AgentC', 'NY', 'USA', '20101990', 'A', '10001', 'USA.csv', 1),
 
 -- 3. Rename collision loaded in ONE insert statement (identical INGESTED_AT)
-('D', 'FLAT_FILE', 'REN_202', 'Alice Brown', '20200101', '20210601', 'GLD', 'AgentD', 'VIC', 'AU', '12121992', 'A', '3000', 'older_event.dat'),
-('D', 'FLAT_FILE', 'REN_202', 'Alice Green', '20200101', '20230815', 'GLD', 'AgentD', 'VIC', 'AU', '12121992', 'A', '3000', 'newer_event.dat'),
+('D', 'FLAT_FILE', 'REN_202', 'Alice Brown', '20200101', '20210601', 'GLD', 'AgentD', 'VIC', 'AU', '12121992', 'A', '3000', 'older_event.dat', 1),
+('D', 'FLAT_FILE', 'REN_202', 'Alice Green', '20200101', '20230815', 'GLD', 'AgentD', 'VIC', 'AU', '12121992', 'A', '3000', 'newer_event.dat', 2),
 
 -- 4. Empty-string Tier Code (should be treated as NULL and valid, not rejected)
-('D', 'FLAT_FILE', 'EMPTY_TIER_1', 'Carlos Ray', '20220101', '20230101', '   ', 'AgentE', 'NCR', 'PHIL', '01011990', 'A', '1200', 'ph_batch.dat'),
+('D', 'FLAT_FILE', 'EMPTY_TIER_1', 'Carlos Ray', '20220101', '20230101', '   ', 'AgentE', 'NCR', 'PHIL', '01011990', 'A', '1200', 'ph_batch.dat', 1),
 
 -- 5. Unmapped country 'GERMANY' (quarantined to DLQ)
-('D', 'FLAT_FILE', 'BAD_CTRY_1', 'Hans Gruber', '20220101', '20230101', 'GLD', 'AgentF', 'BER', 'GERMANY', '01011990', 'A', '10115', 'eu_batch.dat'),
+('D', 'FLAT_FILE', 'BAD_CTRY_1', 'Hans Gruber', '20220101', '20230101', 'GLD', 'AgentF', 'BER', 'GERMANY', '01011990', 'A', '10115', 'eu_batch.dat', 1),
 
 -- 6. Null country (quarantined to DLQ)
-('D', 'FLAT_FILE', 'NULL_CTRY_1', 'Jane Doe', '20220101', '20230101', 'GLD', 'AgentG', 'CA', NULL, '01011990', 'A', '90210', 'us_batch.dat'),
+('D', 'FLAT_FILE', 'NULL_CTRY_1', 'Jane Doe', '20220101', '20230101', 'GLD', 'AgentG', 'CA', NULL, '01011990', 'A', '90210', 'us_batch.dat', 1),
 
 -- 7. Two distinct rows with missing member_id in the same batch (both must be quarantined, not suppressed)
-('D', 'FLAT_FILE', NULL, 'Missing ID Alpha', '20220101', '20230101', 'GLD', 'AgentH', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
-('D', 'FLAT_FILE', NULL, 'Missing ID Beta', '20220101', '20230101', 'GLD', 'AgentH', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+('D', 'FLAT_FILE', NULL, 'Missing ID Alpha', '20220101', '20230101', 'GLD', 'AgentH', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat', 1),
+('D', 'FLAT_FILE', NULL, 'Missing ID Beta', '20220101', '20230101', 'GLD', 'AgentH', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat', 2),
 
 -- 8. Same ID in two distinct source systems both bad (both must be quarantined)
-('D', 'IND_SYS', 'BAD_DUP_1', 'Bad Ind User', '20220101', '20230101', 'GLD', 'AgentI', 'BER', 'GERMANY', '01011990', 'A', '11001', 'IND_bad.csv'),
-('D', 'USA_SYS', 'BAD_DUP_1', 'Bad Usa User', '20220101', '20230101', 'GLD', 'AgentI', 'BER', 'GERMANY', '01011990', 'A', '10001', 'USA_bad.csv'),
+('D', 'IND_SYS', 'BAD_DUP_1', 'Bad Ind User', '20220101', '20230101', 'GLD', 'AgentI', 'BER', 'GERMANY', '01011990', 'A', '11001', 'IND_bad.csv', 1),
+('D', 'USA_SYS', 'BAD_DUP_1', 'Bad Usa User', '20220101', '20230101', 'GLD', 'AgentI', 'BER', 'GERMANY', '01011990', 'A', '10001', 'USA_bad.csv', 1),
 
 -- 9. Bad row arriving in Batch 1 (will be repeated in Batch 2)
-('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat', 1),
 
 -- 10. Member BATCH_REN_1 original name in Batch 1 (will be renamed in Batch 2)
-('D', 'FLAT_FILE', 'BATCH_REN_1', 'Original Name', '20200101', '20210101', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+('D', 'FLAT_FILE', 'BATCH_REN_1', 'Original Name', '20200101', '20210101', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat', 1),
 
 -- 11. Member RESOLVE_101 ambiguous across two sources in Batch 1 (will be resolved in Batch 2)
-('D', 'IND_SYS', 'RESOLVE_101', 'Rahul Ind', '20200101', '20210101', 'GLD', 'AgentL', 'MH', 'IND', '01011990', 'A', '40001', 'ind_1.dat'),
-('D', 'USA_SYS', 'RESOLVE_101', 'Sam Usa', '20200101', '20210101', 'GLD', 'AgentL', 'CA', 'USA', '01011990', 'A', '90210', 'usa_1.dat'),
+('D', 'IND_SYS', 'RESOLVE_101', 'Rahul Ind', '20200101', '20210101', 'GLD', 'AgentL', 'MH', 'IND', '01011990', 'A', '40001', 'ind_1.dat', 1),
+('D', 'USA_SYS', 'RESOLVE_101', 'Sam Usa', '20200101', '20210101', 'GLD', 'AgentL', 'CA', 'USA', '01011990', 'A', '90210', 'usa_1.dat', 1),
 
 -- 12. Invalid DOB (unparseable calendar date, should be quarantined to DLQ)
-('D', 'FLAT_FILE', 'BAD_DOB_1', 'Bad DOB User', '20220101', '20230101', 'GLD', 'AgentM', 'CA', 'USA', '99999999', 'A', '90210', 'batch_1.dat');
+('D', 'FLAT_FILE', 'BAD_DOB_1', 'Bad DOB User', '20220101', '20230101', 'GLD', 'AgentM', 'CA', 'USA', '99999999', 'A', '90210', 'batch_1.dat', 1),
+
+-- 13. Same-day cross-country move in Batch 1 (arrives in USA with file_20240115_a.dat, line 10)
+('D', 'FLAT_FILE', 'SAME_DAY_MOVE_1', 'Same Day User', '20220101', '20230101', 'GLD', 'AgentSD', 'CA', 'USA', '01011990', 'A', '90210', 'file_20240115_a.dat', 10),
+
+-- 14. Same-country tie winner in Batch 1 (USA, line 20)
+('D', 'FLAT_FILE', 'SAME_CTRY_TIE_1', 'Tie Winner', '20220101', '20230101', 'GLD', 'AgentCT', 'CA', 'USA', '01011990', 'A', '90210', 'tie_1.dat', 20);
 
 -- Redemption fixtures
 -- Non-numeric miles_redeemed fixture: 'abc' quarantined without aborting
@@ -146,11 +159,15 @@ SELECT PARSE_JSON('{
 -- 3. Ambiguity resolution: remove spurious secondary source for RESOLVE_101 so ambiguity disappears
 INSERT INTO RAW_MEMBER_LANDING (
     RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
-    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME, LINE_NO
 ) VALUES
-('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat'),
-('D', 'FLAT_FILE', 'BATCH_REN_1', 'Updated Name', '20200101', '20230601', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat'),
-('D', 'FLAT_FILE', 'MOVE_101', 'David Miller Older', '20200101', '20210101', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'batch_old_20200101.dat');
+('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat', 1),
+('D', 'FLAT_FILE', 'BATCH_REN_1', 'Updated Name', '20200101', '20230601', 'GLD', 'AgentK', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat', 2),
+('D', 'FLAT_FILE', 'MOVE_101', 'David Miller Older', '20200101', '20210101', 'GLD', 'AgentA', 'MH', 'IND', '03051985', 'A', '40001', 'batch_old_20200101.dat', 3),
+-- Same-day correction with equal line numbers (10 == 10) moving country from USA to IND (file_b wins over file_a)
+('D', 'FLAT_FILE', 'SAME_DAY_MOVE_1', 'Same Day User', '20220101', '20230101', 'GLD', 'AgentSD', 'MH', 'IND', '01011990', 'A', '40001', 'file_20240115_b.dat', 10),
+-- Same-country tie with lower line number 5 (loses to existing line 20)
+('D', 'FLAT_FILE', 'SAME_CTRY_TIE_1', 'Tie Loser', '20220101', '20230101', 'GLD', 'AgentCT', 'CA', 'USA', '01011990', 'A', '90210', 'tie_1.dat', 5);
 
 -- Resolve ambiguity for RESOLVE_101 before Batch 2 execution
 DELETE FROM STG_MEMBER_PROFILE WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_101';
@@ -158,13 +175,6 @@ DELETE FROM TABLE_USA WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_1
 
 -- Step 4C: Run production pipeline for Batch 2 via run_all.sql (Run 2: Processes Batch 2)
 !source sql/snowflake/run_all.sql
-
--- Step 5A: Simulate in-flight arrival landing after Batch 2 but before rerun (BATCH_ID IS NULL)
-INSERT INTO RAW_MEMBER_LANDING (
-    RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
-    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
-) VALUES
-('D', 'FLAT_FILE', 'INFLIGHT_1', 'Inflight User', '20240101', '20240101', 'GLD', 'AgentN', 'CA', 'USA', '01011990', 'A', '90210', 'inflight_arrival.dat');
 
 -- Step 5: Capture snapshot of mart and table counts BEFORE rerun into temporary table
 CREATE OR REPLACE TEMPORARY TABLE PRE_RERUN_SNAPSHOT AS
@@ -177,7 +187,17 @@ SELECT
     (SELECT TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_COMPLETED_MILES,
     (SELECT TO_VARCHAR(COALESCE(PENDING_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_PENDING_MILES;
 
--- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 3: Claims and processes in-flight record)
+-- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 3: Empty idempotent rerun)
+!source sql/snowflake/run_all.sql
+
+-- Step 5C: Simulate in-flight arrival landing after batch finalization (BATCH_ID IS NULL)
+INSERT INTO RAW_MEMBER_LANDING (
+    RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
+) VALUES
+('D', 'FLAT_FILE', 'INFLIGHT_1', 'Inflight User', '20240101', '20240101', 'GLD', 'AgentN', 'CA', 'USA', '01011990', 'A', '90210', 'inflight_arrival.dat');
+
+-- Run 4: Claims and processes in-flight record
 !source sql/snowflake/run_all.sql
 
 -- Step 6: Single evaluation query returning scenario, expected, actual, PASS/FAIL
@@ -291,7 +311,7 @@ WITH AssertionResults AS (
     SELECT
         10 AS test_id,
         'Mart before rerun: MEMBER_LOYALTY_360 total member rows' AS scenario,
-        '5' AS expected,
+        '10' AS expected,
         TO_VARCHAR(MART_COUNT) AS actual
     FROM PRE_RERUN_SNAPSHOT
 
@@ -496,6 +516,61 @@ WITH AssertionResults AS (
         TO_VARCHAR(COUNT(*)) AS actual
     FROM TABLE_USA
     WHERE MEMBER_ID = 'INFLIGHT_1'
+
+    UNION ALL
+
+    -- Scenario 19: Interrupted batch recovery (unprocessed row with old batch ID is re-claimed and processed)
+    SELECT
+        30 AS test_id,
+        'Interrupted batch: unprocessed landing record with old batch ID is re-claimed and processed' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM TABLE_USA
+    WHERE MEMBER_ID = 'INTERRUPT_1'
+
+    UNION ALL
+
+    -- Scenario 20: Interrupted batch landing row stamped with PROCESSED_AT
+    SELECT
+        31 AS test_id,
+        'Interrupted batch: landing row stamped with PROCESSED_AT' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_MEMBER_LANDING
+    WHERE MEMBER_ID = 'INTERRUPT_1' AND PROCESSED_AT IS NOT NULL
+
+    UNION ALL
+
+    -- Scenario 21A: Same-day correction with equal line numbers deleted from old TABLE_USA
+    SELECT
+        32 AS test_id,
+        'Same-day correction with equal line numbers: deleted from old TABLE_USA' AS scenario,
+        '0' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM TABLE_USA
+    WHERE MEMBER_ID = 'SAME_DAY_MOVE_1'
+
+    UNION ALL
+
+    -- Scenario 21B: Same-day correction with equal line numbers inserted into new TABLE_INDIA
+    SELECT
+        33 AS test_id,
+        'Same-day correction with equal line numbers: inserted into new TABLE_INDIA' AS scenario,
+        '1' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM TABLE_INDIA
+    WHERE MEMBER_ID = 'SAME_DAY_MOVE_1'
+
+    UNION ALL
+
+    -- Scenario 22: Same-country tie with lower line number: existing higher line number record preserved
+    SELECT
+        34 AS test_id,
+        'Same-country tie with lower line number: existing higher line number record preserved' AS scenario,
+        '20' AS expected,
+        TO_VARCHAR(COALESCE(MAX(LINE_NO), 0)) AS actual
+    FROM TABLE_USA
+    WHERE MEMBER_ID = 'SAME_CTRY_TIE_1'
 )
 SELECT
     scenario,
