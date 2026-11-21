@@ -31,8 +31,6 @@ flowchart TD
         Dedup --> Merges{"Dynamic Country Router\n(Incremental MERGE)"}
         Merges --> T_IND["TABLE_INDIA"]
         Merges --> T_USA["TABLE_USA"]
-        Merges --> T_CAN["TABLE_CAN"]
-        Merges --> T_PHIL["TABLE_PHIL"]
         Merges --> T_AU["TABLE_AU"]
     end
 
@@ -45,7 +43,7 @@ flowchart TD
     end
 
     subgraph AnalyticalMart ["6. Analytical Mart & Finalization"]
-        T_IND & T_USA & T_CAN & T_PHIL & T_AU --> CurrentView["MEMBERS_ALL_CURRENT View\n(Recomputed Age & Stale Member)"]
+        T_IND & T_USA & T_AU --> CurrentView["MEMBERS_ALL_CURRENT View\n(Recomputed Age & Stale Member)"]
         CurrentView & StgRedemp --> MartMerge{"Incremental Mart MERGE\n(Touched Members Only)"}
         MartMerge --> Mart["MEMBER_LOYALTY_360\n- Profile Attributes\n- Completed vs Pending Miles\n- Top Partner Identification"]
         MartMerge --> Finalize["Stamp Landing PROCESSED_AT = CURRENT_TIMESTAMP()\nWHERE BATCH_ID = $run_batch_id"]

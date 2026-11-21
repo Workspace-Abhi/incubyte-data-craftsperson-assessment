@@ -62,7 +62,7 @@ INSERT INTO RAW_MEMBER_LANDING (
 ('D', 'FLAT_FILE', 'REN_202', 'Alice Green', '20200101', '20230815', 'GLD', 'AgentD', 'VIC', 'AU', '12121992', 'A', '3000', 'newer_event.dat', 2),
 
 -- 4. Empty-string Tier Code (should be treated as NULL and valid, not rejected)
-('D', 'FLAT_FILE', 'EMPTY_TIER_1', 'Carlos Ray', '20220101', '20230101', '   ', 'AgentE', 'NCR', 'PHIL', '01011990', 'A', '1200', 'ph_batch.dat', 1),
+('D', 'FLAT_FILE', 'EMPTY_TIER_1', 'Carlos Ray', '20220101', '20230101', '   ', 'AgentE', 'VIC', 'AU', '01011990', 'A', '3000', 'au_batch.dat', 1),
 
 -- 5. Unmapped country 'GERMANY' (quarantined to DLQ)
 ('D', 'FLAT_FILE', 'BAD_CTRY_1', 'Hans Gruber', '20220101', '20230101', 'GLD', 'AgentF', 'BER', 'GERMANY', '01011990', 'A', '10115', 'eu_batch.dat', 1),
@@ -265,7 +265,7 @@ WITH AssertionResults AS (
         'Empty-string tier code: treated as null, not quarantined' AS scenario,
         '1' AS expected,
         TO_VARCHAR(COUNT(*)) AS actual
-    FROM TABLE_PHIL
+    FROM TABLE_AU
     WHERE MEMBER_ID = 'EMPTY_TIER_1'
       AND TIER_CODE IS NULL
 

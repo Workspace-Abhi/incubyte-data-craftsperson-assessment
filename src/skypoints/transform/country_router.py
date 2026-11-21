@@ -8,10 +8,6 @@ CANONICAL_COUNTRY_MAP = {
     "IND": "IND",
     "INDIA": "IND",
     "USA": "USA",
-    "CAN": "CAN",
-    "CANADA": "CAN",
-    "PHIL": "PHIL",
-    "PH": "PHIL",
     "AU": "AU",
     "AUS": "AU",
 }
@@ -19,22 +15,18 @@ CANONICAL_COUNTRY_MAP = {
 CANONICAL_TABLE_MAP = {
     "IND": "table_india",
     "USA": "table_usa",
-    "CAN": "table_canada",
-    "PHIL": "table_philippines",
     "AU": "table_australia",
 }
 
 CANONICAL_SNOWFLAKE_TABLE_MAP = {
     "IND": "TABLE_INDIA",
     "USA": "TABLE_USA",
-    "CAN": "TABLE_CAN",
-    "PHIL": "TABLE_PHIL",
     "AU": "TABLE_AU",
 }
 
 
 def normalize_country(country: Optional[str]) -> Optional[str]:
-    """Map country aliases to canonical codes (IND, USA, CAN, PHIL, AU).
+    """Map country aliases to canonical codes (IND, USA, AU).
 
     Returns None if country is missing or not in the canonical map.
     """

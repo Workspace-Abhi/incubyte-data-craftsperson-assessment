@@ -13,7 +13,7 @@ All Snowflake SQL scripts reside in [`sql/snowflake/`](../sql/snowflake/). Becau
 | **01** | [`01_ddl.sql`](../sql/snowflake/01_ddl.sql) | Creates landing tables, staging tables, country tables, DLQ quarantine, views, and reference mappings. |
 | **02** | [`02_ingestion.sql`](../sql/snowflake/02_ingestion.sql) | Production template declaring external stages, file formats, and `COPY INTO` streams (template only; not executed in smoke test). |
 | **03** | [`03_transformations.sql`](../sql/snowflake/03_transformations.sql) | Initializes session `$run_batch_id`, claims landing rows, runs member/redemption validation, DLQ routing, and deduplication. |
-| **04** | [`04_country_merges.generated.sql`](../sql/snowflake/04_country_merges.generated.sql) | Deterministically generated incremental MERGEs for `TABLE_INDIA`, `TABLE_USA`, `TABLE_CAN`, `TABLE_PHIL`, `TABLE_AU`. |
+| **04** | [`04_country_merges.generated.sql`](../sql/snowflake/04_country_merges.generated.sql) | Deterministically generated incremental MERGEs for `TABLE_INDIA`, `TABLE_USA`, `TABLE_AU`. |
 | **05** | [`05_mart_and_finalize.sql`](../sql/snowflake/05_mart_and_finalize.sql) | Flags ambiguous redemptions, builds `MEMBER_LOYALTY_360` mart, and marks claimed landing rows as processed. |
 
 To execute the entire pipeline end-to-end in one command:

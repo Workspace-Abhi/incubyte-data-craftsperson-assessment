@@ -121,8 +121,6 @@ def test_snowflake_ddl_ref_country_map():
     assert "REF_COUNTRY_MAP" in content
     assert "'TABLE_INDIA'" in content
     assert "'TABLE_USA'" in content
-    assert "'TABLE_CAN'" in content
-    assert "'TABLE_PHIL'" in content
     assert "'TABLE_AU'" in content
 
     # Task 1: SOURCE_SYSTEM in DDL and composite primary keys
@@ -164,8 +162,6 @@ def test_snowflake_ddl_ref_country_map():
     assert "CREATE OR REPLACE VIEW MEMBERS_ALL AS" in content
     assert "FROM TABLE_INDIA" in content
     assert "FROM TABLE_USA" in content
-    assert "FROM TABLE_CAN" in content
-    assert "FROM TABLE_PHIL" in content
     assert "FROM TABLE_AU" in content
     assert "SELECT *" not in content.split("MEMBERS_ALL AS")[1].split("SEMI-STRUCTURED")[0]
 
@@ -271,8 +267,6 @@ def test_generated_country_merges_matches_script_output():
     # Static SQL assertions on generated country merges
     assert "MERGE INTO TABLE_INDIA target" in actual
     assert "MERGE INTO TABLE_USA target" in actual
-    assert "MERGE INTO TABLE_CAN target" in actual
-    assert "MERGE INTO TABLE_PHIL target" in actual
     assert "MERGE INTO TABLE_AU target" in actual
     assert "target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID" in actual
     assert "target.POST_CODE = src.POST_CODE" in actual

@@ -12,11 +12,9 @@ This document details the domain assumptions, data sanitization heuristics, and 
 - **Line Ordering**: When multiple records share the exact same `EXTRACT_DATE`, the pipeline tie-breaks deterministically using `COALESCE(last_flight_date, enrollment_date) DESC`, then `SOURCE_FILE_NAME DESC`, and finally `LINE_NO DESC`.
 
 ### 1.2 Country Code Canonicalization
-The pipeline maps legacy and regional country representations to 5 canonical target codes:
+The pipeline maps legacy and regional country representations to 3 canonical target codes corresponding to the source feeds:
 - `IND` (Aliases: `INDIA`) $\rightarrow$ `TABLE_INDIA`
 - `USA` $\rightarrow$ `TABLE_USA`
-- `CAN` (Aliases: `CANADA`) $\rightarrow$ `TABLE_CAN`
-- `PHIL` (Aliases: `PH`) $\rightarrow$ `TABLE_PHIL`
 - `AU` (Aliases: `AUS`) $\rightarrow$ `TABLE_AU`
 
 **Policy on Unmapped/Missing Countries**:
