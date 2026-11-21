@@ -54,6 +54,8 @@ class StagingEngine:
                 is_active VARCHAR DEFAULT 'A',
                 age INTEGER,
                 stale_member VARCHAR(1),
+                extract_date DATE,
+                line_no INTEGER,
                 ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -83,14 +85,16 @@ class StagingEngine:
                 r.is_active or "A",
                 age,
                 stale,
+                r.extract_date,
+                r.line_no,
             ))
 
         self.conn.executemany("""
             INSERT INTO stg_member_profile (
                 source_system, source_file, member_id, member_name, enrollment_date, last_flight_date,
                 tier_code, agent_name, state, country, post_code, dob,
-                is_active, age, stale_member
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                is_active, age, stale_member, extract_date, line_no
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, rows)
 
         return len(rows)

@@ -208,6 +208,8 @@ def validate_member_record(raw: RawMemberRecord) -> Tuple[Optional[CleanMemberRe
         is_active=is_active,
         source_file=raw.source_file,
         source_system=raw.source_system,
+        extract_date=raw.extract_date,
+        line_no=raw.line_no,
     ), None
 
 
@@ -215,9 +217,8 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
     """Validate a batch of raw records, detecting key collisions and routing errors to DLQ.
 
     Order-independent: Groups by (source_system, member_id). If names differ, keeps
-    the record with latest COALESCE(last_flight_date, enrollment_date), tie-breaking
-    by source_file name and row order (index). Quarantines older conflicting records
-    with reason 'Key collision: superseded by newer record'.
+    the record with latest EXTRACT_DATE DESC, then COALESCE(last_flight_date, enrollment_date) DESC,
+    then LINE_NO DESC. Quarantines older conflicting records with reason 'Key collision: superseded by newer record'.
 
     Also computes non-blocking batch data quality warnings (member_id length anomalies
     and DOB concentration > 50%).
@@ -252,14 +253,14 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
             for clean, _, _ in items:
                 result.valid_records.append(clean)
         else:
-            # Names differ: sort deterministically by COALESCE(last_flight_date, enrollment_date) DESC,
-            # source_file name DESC, and row index DESC
+            # Names differ: sort deterministically by EXTRACT_DATE DESC,
+            # COALESCE(last_flight_date, enrollment_date) DESC, and LINE_NO / row index DESC
             items_sorted = sorted(
                 items,
                 key=lambda triple: (
+                    triple[0].extract_date or date.min,
                     triple[0].last_flight_date or triple[0].enrollment_date,
-                    triple[0].source_file or "",
-                    triple[2],
+                    triple[0].line_no or triple[2],
                 ),
                 reverse=True,
             )

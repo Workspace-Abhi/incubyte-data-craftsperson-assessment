@@ -90,6 +90,8 @@ class CountryRouter:
                 is_active VARCHAR DEFAULT 'A',
                 age INTEGER,
                 stale_member VARCHAR(1),
+                extract_date DATE,
+                line_no INTEGER,
                 last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source_system, member_id)
             );
@@ -108,7 +110,10 @@ class CountryRouter:
                     *,
                     ROW_NUMBER() OVER (
                         PARTITION BY source_system, member_id
-                        ORDER BY COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC, COALESCE(source_file, '') DESC
+                        ORDER BY COALESCE(extract_date, DATE '1970-01-01') DESC,
+                                 COALESCE(last_flight_date, enrollment_date) DESC,
+                                 ingested_at DESC,
+                                 COALESCE(line_no, 0) DESC
                     ) AS rn
                 FROM stg_member_profile
             )
@@ -136,12 +141,12 @@ class CountryRouter:
                     INSERT INTO {target_table} (
                         source_system, member_id, member_name, enrollment_date, last_flight_date,
                         tier_code, agent_name, state, country, post_code, dob,
-                        is_active, age, stale_member, last_updated_at
+                        is_active, age, stale_member, extract_date, line_no, last_updated_at
                     )
                     SELECT
                         source_system, member_id, member_name, enrollment_date, last_flight_date,
                         tier_code, agent_name, state, country, post_code, dob,
-                        is_active, age, stale_member, CURRENT_TIMESTAMP
+                        is_active, age, stale_member, extract_date, line_no, CURRENT_TIMESTAMP
                     FROM tmp_latest_members
                     WHERE country IS NULL;
                 """)
@@ -156,12 +161,12 @@ class CountryRouter:
                     INSERT INTO {target_table} (
                         source_system, member_id, member_name, enrollment_date, last_flight_date,
                         tier_code, agent_name, state, country, post_code, dob,
-                        is_active, age, stale_member, last_updated_at
+                        is_active, age, stale_member, extract_date, line_no, last_updated_at
                     )
                     SELECT
                         source_system, member_id, member_name, enrollment_date, last_flight_date,
                         tier_code, agent_name, state, country, post_code, dob,
-                        is_active, age, stale_member, CURRENT_TIMESTAMP
+                        is_active, age, stale_member, extract_date, line_no, CURRENT_TIMESTAMP
                     FROM tmp_latest_members
                     WHERE country = ?;
                 """, [country_val])

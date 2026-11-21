@@ -27,6 +27,8 @@ WHEN MATCHED THEN
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -43,6 +45,8 @@ WHEN NOT MATCHED THEN
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -59,6 +63,8 @@ WHEN NOT MATCHED THEN
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 
@@ -95,6 +101,8 @@ WHEN MATCHED THEN
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -111,6 +119,8 @@ WHEN NOT MATCHED THEN
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -127,6 +137,8 @@ WHEN NOT MATCHED THEN
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 
@@ -163,6 +175,8 @@ WHEN MATCHED THEN
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -179,6 +193,8 @@ WHEN NOT MATCHED THEN
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -195,6 +211,8 @@ WHEN NOT MATCHED THEN
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 
@@ -231,6 +249,8 @@ WHEN MATCHED THEN
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -247,6 +267,8 @@ WHEN NOT MATCHED THEN
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -263,6 +285,8 @@ WHEN NOT MATCHED THEN
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 
@@ -299,6 +323,8 @@ WHEN MATCHED THEN
         target.IS_ACTIVE = src.IS_ACTIVE,
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
+        target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
     INSERT (
@@ -315,6 +341,8 @@ WHEN NOT MATCHED THEN
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        EXTRACT_DATE,
+        LINE_NO,
         LAST_UPDATED_AT
     )
     VALUES (
@@ -331,6 +359,8 @@ WHEN NOT MATCHED THEN
         src.IS_ACTIVE,
         src.AGE,
         src.STALE_MEMBER,
+        src.EXTRACT_DATE,
+        src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
 

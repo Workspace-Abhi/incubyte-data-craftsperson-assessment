@@ -180,3 +180,39 @@ class TestCountrySplitAndDeduplication:
         router = CountryRouter()
         with pytest.raises(ValueError, match="Unmapped country"):
             router.get_table_name_for_country("GERMANY")
+
+    def test_member_moves_country_with_lower_flight_date_but_newer_extract_date(self):
+        engine = StagingEngine()
+        router = CountryRouter(engine.conn)
+
+        # Older extract date (2023-01-01) with newer flight date (2023-05-01) in IND
+        # Newer extract date (2023-06-01) with lower flight date (2021-01-01) in USA
+        # Because extract date is prioritized over flight date, USA must win
+        records = [
+            CleanMemberRecord(
+                member_id="M_RECENCY",
+                member_name="Recency Test",
+                enrollment_date=date(2020, 1, 1),
+                last_flight_date=date(2023, 5, 1),
+                country="IND",
+                extract_date=date(2023, 1, 1),
+            ),
+            CleanMemberRecord(
+                member_id="M_RECENCY",
+                member_name="Recency Test",
+                enrollment_date=date(2020, 1, 1),
+                last_flight_date=date(2021, 1, 1),
+                country="USA",
+                extract_date=date(2023, 6, 1),
+            ),
+        ]
+        engine.load_clean_records(records)
+        router.execute_country_split()
+
+        ind_rows = router.get_country_records("table_india")
+        usa_rows = router.get_country_records("table_usa")
+
+        assert len(ind_rows) == 0, "Older extract date in IND must be superseded and removed"
+        assert len(usa_rows) == 1, "Newer extract date in USA must win"
+        assert usa_rows[0]["member_id"] == "M_RECENCY"
+        assert usa_rows[0]["country"] == "USA"

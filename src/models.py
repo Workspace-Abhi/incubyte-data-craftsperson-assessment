@@ -20,6 +20,8 @@ class RawMemberRecord:
     source_file: Optional[str] = None
     source_system: str = "FLAT_FILE"
     date_format_hint: Optional[str] = None
+    extract_date: Optional[date] = None
+    line_no: Optional[int] = None
 
 
 @dataclass
@@ -37,6 +39,8 @@ class CleanMemberRecord:
     is_active: Optional[str] = "A"
     source_file: Optional[str] = None
     source_system: str = "FLAT_FILE"
+    extract_date: Optional[date] = None
+    line_no: Optional[int] = None
 
 
 @dataclass

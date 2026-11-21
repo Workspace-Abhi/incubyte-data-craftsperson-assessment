@@ -1,10 +1,26 @@
 """Flat file and dataset reader supporting pipe-delimited feeds and legacy CSVs."""
 from typing import List, Optional, Union
 import csv
+import re
+from datetime import date, datetime
 from pathlib import Path
 from src.models import RawMemberRecord
 
 FilePath = Union[str, Path]
+
+
+def _extract_date_from_file_path(path: Path) -> date:
+    """Extract extract_date from the first YYYYMMDD in filename, falling back to mtime."""
+    match = re.search(r'(\d{8})', path.name)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y%m%d").date()
+        except ValueError:
+            pass
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).date()
+    except Exception:
+        return date.today()
 
 
 def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
@@ -17,8 +33,10 @@ def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
     if not path.exists():
         return records
 
+    file_extract_date = _extract_date_from_file_path(path)
+
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
+        for line_no, line in enumerate(f, start=1):
             clean_line = line.strip()
             if not clean_line:
                 continue
@@ -72,6 +90,8 @@ def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
                     source_file=path.name,
                     source_system="FLAT_FILE",
                     date_format_hint="FLAT_FILE",
+                    extract_date=file_extract_date,
+                    line_no=line_no,
                 )
             )
 
@@ -90,12 +110,12 @@ def read_csv_file(
         return records
 
     hint = date_format_hint
-
     src_system = path.stem.upper() if path.stem else "CSV"
+    file_extract_date = _extract_date_from_file_path(path)
 
     with open(path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        for row in reader:
+        for line_no, row in enumerate(reader, start=2):
             norm_row = {k.strip().lower().replace(" ", "_"): v.strip() for k, v in row.items() if k}
 
             raw_id = norm_row.get("id") or norm_row.get("unique_id") or norm_row.get("member_id")
@@ -118,6 +138,8 @@ def read_csv_file(
                     source_file=path.name,
                     source_system=src_system,
                     date_format_hint=hint,
+                    extract_date=file_extract_date,
+                    line_no=line_no,
                 )
             )
 

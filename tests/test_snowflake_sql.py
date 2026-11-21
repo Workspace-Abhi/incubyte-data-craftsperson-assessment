@@ -124,6 +124,8 @@ def test_snowflake_ddl_ref_country_map():
     assert "BATCH_ID             VARCHAR(50)" in content
     assert "PROCESSED_AT         TIMESTAMP_NTZ" in content
     assert "STG_ROW_ID          VARCHAR          DEFAULT UUID_STRING()" in content
+    assert "EXTRACT_DATE         DATE" in content
+    assert "LINE_NO              NUMBER" in content
 
     # DLQ columns in DDL (P2)
     assert "RAW_RECORD_HASH      VARCHAR(64)" in content
@@ -174,12 +176,12 @@ def test_snowflake_transformations_and_merge():
     assert "Invalid domain value: Is_Active must be in (A, I)" in content
     assert "Invalid Last_Flight_Date: unparseable calendar date" in content
 
-    # Key collisions resolution before dedupe & deterministic tie-breaking (P3 scoped inside current batch)
+    # Key collisions resolution before dedupe & deterministic tie-breaking (P4 recency key)
     assert "Key collision: superseded by newer record" in content
     assert "CurrentBatchMembers AS" in content
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
-    assert "ORDER BY COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.STG_ROW_ID" in content
-    assert "ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, STG_ROW_ID" in content
+    assert "ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.LINE_NO DESC" in content
+    assert "ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, LINE_NO DESC" in content
     assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in content
     assert "DELETE FROM STG_MEMBER_PROFILE" not in content
 

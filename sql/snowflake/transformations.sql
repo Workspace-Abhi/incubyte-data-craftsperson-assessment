@@ -120,6 +120,8 @@ INSERT INTO STG_MEMBER_PROFILE (
     AGE,
     STALE_MEMBER,
     SOURCE_FILE_NAME,
+    EXTRACT_DATE,
+    LINE_NO,
     INGESTED_AT
 )
 WITH SanitizedLanding AS (
@@ -138,6 +140,8 @@ WITH SanitizedLanding AS (
         CASE WHEN NULLIF(TRIM(DOB), '') IS NULL OR UPPER(TRIM(DOB)) IN ('NULL', 'NONE') THEN NULL ELSE TRIM(DOB) END AS DOB,
         CASE WHEN NULLIF(TRIM(IS_ACTIVE), '') IS NULL OR UPPER(TRIM(IS_ACTIVE)) IN ('NULL', 'NONE') THEN NULL ELSE UPPER(TRIM(IS_ACTIVE)) END AS IS_ACTIVE,
         SOURCE_FILE_NAME,
+        COALESCE(EXTRACT_DATE, TRY_TO_DATE(REGEXP_SUBSTR(SOURCE_FILE_NAME, '[0-9]{8}'), 'YYYYMMDD'), INGESTED_AT::DATE, CURRENT_DATE()) AS EXTRACT_DATE,
+        LINE_NO,
         INGESTED_AT
     FROM RAW_MEMBER_LANDING
     WHERE PROCESSED_AT IS NULL
@@ -175,6 +179,8 @@ SELECT
         ELSE 'N'
     END AS STALE_MEMBER,
     s.SOURCE_FILE_NAME,
+    s.EXTRACT_DATE,
+    s.LINE_NO,
     CURRENT_TIMESTAMP() AS INGESTED_AT
 FROM SanitizedLanding s
 JOIN REF_COUNTRY_MAP m ON s.COUNTRY = m.COUNTRY_CODE
@@ -198,9 +204,9 @@ WHERE s.RECORD_TYPE = 'D'
 -- Detects (SOURCE_SYSTEM, MEMBER_ID) groups with differing names INSIDE the
 -- current batch (BATCH_ID = $run_batch_id). A rename across distinct batches
 -- is treated as a normal update without DLQ rejection.
--- Identifies the row with the latest COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE),
--- tie-breaking on INGESTED_AT DESC, STG_ROW_ID, and idempotently quarantines
--- older conflicting rows to RAW_DLQ_QUARANTINE.
+-- Identifies the row with the latest EXTRACT_DATE DESC, then
+-- COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, tie-breaking on INGESTED_AT DESC,
+-- LINE_NO DESC, and idempotently quarantines older conflicting rows to RAW_DLQ_QUARANTINE.
 -- NOTE: We do not run a DELETE on STG_MEMBER_PROFILE here because:
 --   1) Matching on (SOURCE_SYSTEM, MEMBER_ID, INGESTED_AT) deletes BOTH the winner
 --      and loser since Snowflake's CURRENT_TIMESTAMP() is identical within a batch.
@@ -225,7 +231,7 @@ USING (
             s.*,
             ROW_NUMBER() OVER (
                 PARTITION BY s.SOURCE_SYSTEM, s.MEMBER_ID
-                ORDER BY COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.STG_ROW_ID
+                ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.LINE_NO DESC
             ) AS RN
         FROM CurrentBatchMembers s
         JOIN MultiNameGroups g ON s.SOURCE_SYSTEM = g.SOURCE_SYSTEM AND s.MEMBER_ID = g.MEMBER_ID
@@ -254,7 +260,8 @@ WHEN NOT MATCHED THEN
 -- ----------------------------------------------------------------------------
 -- STEP 3: "Latest Record Wins" Transformation & Full Per-Country Split
 -- Covers all 5 target countries: IND, USA, CAN, PHIL, AU
--- Tie-breaks with STG_ROW_ID for deterministic resolution within a run.
+-- Prioritizes EXTRACT_DATE DESC, then COALESCE(flight, enrollment) DESC,
+-- tie-breaking with LINE_NO DESC for deterministic resolution.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TEMPORARY TABLE DEDUPED_LATEST_MEMBERS AS
 WITH RankedMembers AS (
@@ -273,11 +280,13 @@ WITH RankedMembers AS (
         AGE,
         STALE_MEMBER,
         SOURCE_FILE_NAME,
+        EXTRACT_DATE,
+        LINE_NO,
         INGESTED_AT,
         STG_ROW_ID,
         ROW_NUMBER() OVER (
             PARTITION BY SOURCE_SYSTEM, MEMBER_ID 
-            ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, STG_ROW_ID
+            ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, LINE_NO DESC
         ) AS RN
     FROM STG_MEMBER_PROFILE
 )
