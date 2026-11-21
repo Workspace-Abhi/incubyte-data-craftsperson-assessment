@@ -24,6 +24,14 @@ CANONICAL_TABLE_MAP = {
     "AU": "table_australia",
 }
 
+CANONICAL_SNOWFLAKE_TABLE_MAP = {
+    "IND": "TABLE_INDIA",
+    "USA": "TABLE_USA",
+    "CAN": "TABLE_CAN",
+    "PHIL": "TABLE_PHIL",
+    "AU": "TABLE_AU",
+}
+
 
 def normalize_country(country: Optional[str]) -> Optional[str]:
     """Map country aliases to canonical codes (IND, USA, CAN, PHIL, AU).

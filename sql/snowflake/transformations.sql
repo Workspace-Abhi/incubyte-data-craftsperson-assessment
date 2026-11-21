@@ -269,62 +269,17 @@ FROM DEDUPED_LATEST_MEMBERS d
 LEFT JOIN REF_COUNTRY_MAP m ON UPPER(TRIM(d.COUNTRY)) = m.COUNTRY_CODE
 WHERE d.COUNTRY IS NULL OR m.TARGET_TABLE IS NULL;
 
--- 2. Snowflake Scripting: Loop over distinct mapped target tables
-EXECUTE IMMEDIATE $$
-DECLARE
-    c1 CURSOR FOR SELECT DISTINCT TARGET_TABLE FROM REF_COUNTRY_MAP;
-    v_tbl VARCHAR;
-BEGIN
-    FOR record IN c1 DO
-        v_tbl := record.TARGET_TABLE;
-
-        -- A. Idempotent MERGE into specific target table updating all columns identically
-        EXECUTE IMMEDIATE '
-            MERGE INTO IDENTIFIER(:1) target
-            USING (
-                SELECT d.*
-                FROM DEDUPED_LATEST_MEMBERS d
-                JOIN REF_COUNTRY_MAP m ON UPPER(TRIM(d.COUNTRY)) = m.COUNTRY_CODE
-                WHERE m.TARGET_TABLE = :1
-            ) src
-            ON target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID
-            WHEN MATCHED THEN
-                UPDATE SET
-                    target.MEMBER_NAME = src.MEMBER_NAME,
-                    target.ENROLLMENT_DATE = src.ENROLLMENT_DATE,
-                    target.LAST_FLIGHT_DATE = src.LAST_FLIGHT_DATE,
-                    target.TIER_CODE = src.TIER_CODE,
-                    target.AGENT_NAME = src.AGENT_NAME,
-                    target.STATE = src.STATE,
-                    target.COUNTRY = src.COUNTRY,
-                    target.DOB = src.DOB,
-                    target.IS_ACTIVE = src.IS_ACTIVE,
-                    target.AGE = src.AGE,
-                    target.STALE_MEMBER = src.STALE_MEMBER,
-                    target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
-            WHEN NOT MATCHED THEN
-                INSERT (SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, AGE, STALE_MEMBER, LAST_UPDATED_AT)
-                VALUES (src.SOURCE_SYSTEM, src.MEMBER_ID, src.MEMBER_NAME, src.ENROLLMENT_DATE, src.LAST_FLIGHT_DATE, src.TIER_CODE, src.AGENT_NAME, src.STATE, src.COUNTRY, src.DOB, src.IS_ACTIVE, src.AGE, src.STALE_MEMBER, CURRENT_TIMESTAMP())'
-            USING (v_tbl);
-
-        -- B. Join-based anti-check DELETE: Removes members who moved to a DIFFERENT mapped country.
-        -- Handles NULL country correctly (no NOT IN NULL traps) and never deletes unmapped countries.
-        EXECUTE IMMEDIATE '
-            DELETE FROM IDENTIFIER(:1) target
-            WHERE EXISTS (
-                SELECT 1
-                FROM DEDUPED_LATEST_MEMBERS d
-                JOIN REF_COUNTRY_MAP m ON UPPER(TRIM(d.COUNTRY)) = m.COUNTRY_CODE
-                WHERE d.SOURCE_SYSTEM = target.SOURCE_SYSTEM
-                  AND d.MEMBER_ID = target.MEMBER_ID
-                  AND m.TARGET_TABLE <> :1
-            )'
-            USING (v_tbl);
-
-    END FOR;
-    RETURN 'SUCCESS';
-END;
-$$;
+-- ----------------------------------------------------------------------------
+-- STEP 3B: Static Country MERGE & Migration DELETE Routing
+-- ----------------------------------------------------------------------------
+-- NOTE: To eliminate Snowflake Scripting syntax risks and dynamic IDENTIFIER(:1) execution,
+-- static MERGE and DELETE statements for all country tables are generated directly from
+-- CANONICAL_TABLE_MAP in src/country_router.py into:
+--   sql/snowflake/generated_country_merges.sql
+--
+-- Run the generated country merges file right after this step:
+-- !include sql/snowflake/generated_country_merges.sql
+-- ----------------------------------------------------------------------------
 
 
 -- ----------------------------------------------------------------------------

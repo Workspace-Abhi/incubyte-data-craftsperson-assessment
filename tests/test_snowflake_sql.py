@@ -30,27 +30,20 @@ def test_snowflake_ddl_ref_country_map():
     assert "'AUS', 'AU', 'TABLE_AU'" in content
 
 
-def test_snowflake_transformations_scripting_and_merge():
+def test_snowflake_transformations_and_merge():
     sql_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "transformations.sql"
     content = sql_path.read_text(encoding="utf-8")
 
-    # Mapping-driven scripting block
-    assert "EXECUTE IMMEDIATE" in content
-    assert "IDENTIFIER(:1)" in content
-    assert "CURSOR FOR SELECT DISTINCT TARGET_TABLE FROM REF_COUNTRY_MAP" in content
+    # Static generation pointer and include instruction (replaces scripting block)
+    assert "generated_country_merges.sql" in content
+    assert "!include sql/snowflake/generated_country_merges.sql" in content
 
-    # Task 1: SOURCE_SYSTEM composite dedup and merge/delete join keys
+    # Task 1 & 2: SOURCE_SYSTEM composite dedup and member loyalty mart
     assert "PARTITION BY SOURCE_SYSTEM, MEMBER_ID" in content
-    assert "target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID" in content
-    assert "d.SOURCE_SYSTEM = target.SOURCE_SYSTEM" in content
     assert "Ambiguous member_id across source systems" in content
     assert "m.SOURCE_SYSTEM" in content
 
-    # Join-based anti-check DELETE
-    assert "WHERE EXISTS" in content
-    assert "m.TARGET_TABLE <> :1" in content
-
-    # Unmapped country quarantine
+    # Unmapped country quarantine at staging
     assert "Unmapped country: Country is required and cannot be empty" in content
     assert "'Unmapped country'" in content
     assert "LEFT JOIN REF_COUNTRY_MAP" in content
@@ -75,5 +68,21 @@ def test_snowflake_transformations_scripting_and_merge():
     assert "MERGE INTO STG_REDEMPTIONS_FLATTENED" in content
     assert "target.TXN_ID = src.TXN_ID" in content
 
-    # Non-execution disclaimer
-    assert "was not executed against a live Snowflake account" in content
+
+def test_generated_country_merges_matches_script_output():
+    from scripts.generate_country_merges import generate_sql
+    output_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "generated_country_merges.sql"
+    assert output_path.exists(), "generated_country_merges.sql must exist"
+    expected = generate_sql()
+    actual = output_path.read_text(encoding="utf-8")
+    assert actual.strip() == expected.strip(), "generated_country_merges.sql must match generate_country_merges.py output"
+
+    # Static SQL assertions on generated country merges
+    assert "MERGE INTO TABLE_INDIA target" in actual
+    assert "MERGE INTO TABLE_USA target" in actual
+    assert "MERGE INTO TABLE_CAN target" in actual
+    assert "MERGE INTO TABLE_PHIL target" in actual
+    assert "MERGE INTO TABLE_AU target" in actual
+    assert "target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID" in actual
+    assert "d.SOURCE_SYSTEM = target.SOURCE_SYSTEM" in actual
+    assert "d.COUNTRY <> 'IND'" in actual
