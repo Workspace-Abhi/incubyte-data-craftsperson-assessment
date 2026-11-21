@@ -139,11 +139,12 @@ WHEN NOT MATCHED THEN
 
 -- ----------------------------------------------------------------------------
 -- STEP 6: Mark Processed Records in Landing Tables for Batch Tracking
+-- Stamps ONLY the records claimed and processed by this specific batch
 -- ----------------------------------------------------------------------------
 UPDATE RAW_MEMBER_LANDING
-SET PROCESSED_AT = CURRENT_TIMESTAMP(), BATCH_ID = $run_batch_id
-WHERE PROCESSED_AT IS NULL;
+SET PROCESSED_AT = CURRENT_TIMESTAMP()
+WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;
 
 UPDATE RAW_REDEMPTIONS_LANDING
-SET PROCESSED_AT = CURRENT_TIMESTAMP(), BATCH_ID = $run_batch_id
-WHERE PROCESSED_AT IS NULL;
+SET PROCESSED_AT = CURRENT_TIMESTAMP()
+WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;

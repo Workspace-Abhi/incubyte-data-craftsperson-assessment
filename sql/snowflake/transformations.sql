@@ -19,11 +19,21 @@ SET run_batch_id = UUID_STRING();
 -- STG_MEMBER_PROFILE is per-batch; truncate before loading the incoming batch
 TRUNCATE TABLE STG_MEMBER_PROFILE;
 
+-- Claim unassigned landing rows for this batch run to protect against in-flight arrivals
+UPDATE RAW_MEMBER_LANDING
+SET BATCH_ID = $run_batch_id
+WHERE PROCESSED_AT IS NULL AND BATCH_ID IS NULL;
+
+UPDATE RAW_REDEMPTIONS_LANDING
+SET BATCH_ID = $run_batch_id
+WHERE PROCESSED_AT IS NULL AND BATCH_ID IS NULL;
+
 -- ----------------------------------------------------------------------------
 -- STEP 1: Quarantine Bad Landing Records into RAW_DLQ_QUARANTINE
 -- Sanitizes empty strings '', 'NULL', and 'NONE' before checking constraints.
 -- Validates mandatory fields, calendar dates, domain rules, and canonical country.
 -- Plain INSERT with BATCH_ID and RAW_RECORD_HASH; landing PROCESSED_AT guarantees idempotency.
+-- Guarded with NOT EXISTS on (BATCH_ID, RAW_RECORD_HASH) to prevent duplicates on mid-run retries.
 -- ----------------------------------------------------------------------------
 INSERT INTO RAW_DLQ_QUARANTINE (
     RECORD_ID,
@@ -54,7 +64,7 @@ WITH SanitizedLanding AS (
         SOURCE_FILE_NAME,
         INGESTED_AT
     FROM RAW_MEMBER_LANDING
-    WHERE PROCESSED_AT IS NULL
+    WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL
 )
 SELECT
     COALESCE(s.MEMBER_ID, 'UNKNOWN_ID') AS RECORD_ID,
@@ -100,6 +110,11 @@ WHERE s.RECORD_TYPE = 'D'
       OR (s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5))
       OR (s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV'))
       OR (s.IS_ACTIVE IS NOT NULL AND s.IS_ACTIVE NOT IN ('A', 'I'))
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM RAW_DLQ_QUARANTINE q
+      WHERE q.BATCH_ID = $run_batch_id
+        AND q.RAW_RECORD_HASH = SHA2(CONCAT_WS('|', s.RECORD_TYPE, s.SOURCE_SYSTEM, s.MEMBER_NAME, s.MEMBER_ID, s.ENROLLMENT_DATE, s.LAST_FLIGHT_DATE, s.TIER_CODE, s.AGENT_NAME, s.STATE, s.COUNTRY, s.DOB, s.IS_ACTIVE), 256)
   );
 
 
@@ -149,7 +164,7 @@ WITH SanitizedLanding AS (
         LINE_NO,
         INGESTED_AT
     FROM RAW_MEMBER_LANDING
-    WHERE PROCESSED_AT IS NULL
+    WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL
 )
 SELECT
     UUID_STRING() AS STG_ROW_ID,
@@ -378,7 +393,7 @@ SELECT
     CURRENT_TIMESTAMP() AS QUARANTINED_AT
 FROM RAW_REDEMPTIONS_LANDING raw,
 LATERAL FLATTEN(input => raw.FEED_PAYLOAD:redemptions) r
-WHERE raw.PROCESSED_AT IS NULL
+WHERE raw.BATCH_ID = $run_batch_id AND raw.PROCESSED_AT IS NULL
   AND (
       raw.FEED_PAYLOAD:feed_date IS NULL
       OR NULLIF(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), '') IS NULL
@@ -392,6 +407,11 @@ WHERE raw.PROCESSED_AT IS NULL
       OR TRY_TO_NUMBER(r.value:miles_redeemed::STRING) < 0
       OR r.value:partner IS NULL OR NULLIF(TRIM(r.value:partner::STRING), '') IS NULL
       OR r.value:status IS NULL OR NULLIF(TRIM(r.value:status::STRING), '') IS NULL
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM RAW_DLQ_QUARANTINE q
+      WHERE q.BATCH_ID = $run_batch_id
+        AND q.RAW_RECORD_HASH = SHA2(r.value::STRING, 256)
   );
 
 -- 2. Idempotent MERGE into STG_REDEMPTIONS_FLATTENED on TXN_ID
@@ -409,7 +429,7 @@ USING (
         $run_batch_id AS BATCH_ID
     FROM RAW_REDEMPTIONS_LANDING raw,
     LATERAL FLATTEN(input => raw.FEED_PAYLOAD:redemptions) r
-    WHERE raw.PROCESSED_AT IS NULL
+    WHERE raw.BATCH_ID = $run_batch_id AND raw.PROCESSED_AT IS NULL
       AND raw.FEED_PAYLOAD:feed_date IS NOT NULL
       AND TRY_TO_DATE(TRIM(raw.FEED_PAYLOAD:feed_date::STRING), 'YYYYMMDD') IS NOT NULL
       AND raw.FEED_PAYLOAD:member_id IS NOT NULL AND NULLIF(TRIM(raw.FEED_PAYLOAD:member_id::STRING), '') IS NOT NULL

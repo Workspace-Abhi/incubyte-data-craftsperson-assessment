@@ -165,13 +165,16 @@ def test_snowflake_transformations_and_merge():
     assert "generated_country_merges.sql" in content
     assert "!source sql/snowflake/generated_country_merges.sql" in content
 
-    # Batch tracking & landing filters (P6: incremental per-batch staging truncate)
+    # Batch tracking & landing filters (P1 & P6: incremental claiming & finalization)
     assert "SET run_batch_id = UUID_STRING();" in content
     assert "TRUNCATE TABLE STG_MEMBER_PROFILE;" in content
     assert "WHERE PROCESSED_AT IS NULL" in content
+    assert "UPDATE RAW_MEMBER_LANDING" in content
+    assert "SET BATCH_ID = $run_batch_id" in content
     assert "UPDATE RAW_MEMBER_LANDING" in finalize_content
     assert "UPDATE RAW_REDEMPTIONS_LANDING" in finalize_content
-    assert "SET PROCESSED_AT = CURRENT_TIMESTAMP(), BATCH_ID = $run_batch_id" in finalize_content
+    assert "SET PROCESSED_AT = CURRENT_TIMESTAMP()" in finalize_content
+    assert "WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL" in finalize_content
 
     # Task 1 & 2: SOURCE_SYSTEM composite dedup and member loyalty mart
     assert "PARTITION BY SOURCE_SYSTEM, MEMBER_ID" in content
