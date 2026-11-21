@@ -1,4 +1,5 @@
 """Country router and 'latest record wins' deduplication engine."""
+import re
 from typing import Dict, List, Any, Optional
 import duckdb
 
@@ -6,7 +7,6 @@ import duckdb
 class CountryRouter:
     """Manages country-specific target tables with 'latest record wins' deduplication."""
 
-    # Standard country table mapping
     COUNTRY_TABLE_MAP = {
         "IND": "table_india",
         "INDIA": "table_india",
@@ -23,17 +23,20 @@ class CountryRouter:
         self.conn = conn or duckdb.connect(":memory:")
 
     def get_table_name_for_country(self, country: Optional[str]) -> str:
-        """Resolve clean standardized table name for a country code."""
+        """Resolve clean standardized and sanitized table name for a country code."""
         if not country:
             return "table_unknown"
         norm = country.strip().upper()
         if norm in self.COUNTRY_TABLE_MAP:
             return self.COUNTRY_TABLE_MAP[norm]
-        clean_name = "".join(c for c in norm if c.isalnum() or c == "_").lower()
+        clean_name = re.sub(r"[^a-zA-Z0-9_]", "", norm).lower()
         return f"table_{clean_name}"
 
     def ensure_target_table(self, table_name: str) -> None:
-        """Ensure a country target table exists."""
+        """Ensure a country target table exists with strict identifier validation."""
+        if not re.match(r"^table_[a-zA-Z0-9_]+$", table_name):
+            raise ValueError(f"Invalid table identifier: '{table_name}'")
+
         self.conn.execute(f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
                 member_id VARCHAR PRIMARY KEY,
@@ -56,8 +59,7 @@ class CountryRouter:
     def execute_country_split(self) -> Dict[str, int]:
         """Apply 'latest record wins' rule on staging and route members to country target tables.
 
-        If a member previously resided in another country table, they are removed from the old table
-        and placed in the new country table.
+        Parameterized execution eliminates SQL injection risks.
         """
         # 1. Deduplicate staging using window function (latest event wins)
         self.conn.execute("""
@@ -84,32 +86,42 @@ class CountryRouter:
             target_table = self.get_table_name_for_country(country_val)
             self.ensure_target_table(target_table)
 
-            # Country condition
             if country_val is None:
-                where_clause = "country IS NULL"
+                self.conn.execute(f"""
+                    DELETE FROM {target_table}
+                    WHERE member_id IN (SELECT member_id FROM tmp_latest_members WHERE country IS NULL);
+                """)
+                self.conn.execute(f"""
+                    INSERT INTO {target_table} (
+                        member_id, member_name, enrollment_date, last_flight_date,
+                        tier_code, agent_name, state, country, post_code, dob,
+                        is_active, age, stale_member, last_updated_at
+                    )
+                    SELECT
+                        member_id, member_name, enrollment_date, last_flight_date,
+                        tier_code, agent_name, state, country, post_code, dob,
+                        is_active, age, stale_member, CURRENT_TIMESTAMP
+                    FROM tmp_latest_members
+                    WHERE country IS NULL;
+                """)
             else:
-                where_clause = f"country = '{country_val}'"
-
-            # Clean out any old/existing records in this target table that will be updated
-            self.conn.execute(f"""
-                DELETE FROM {target_table}
-                WHERE member_id IN (SELECT member_id FROM tmp_latest_members WHERE {where_clause});
-            """)
-
-            # Insert latest records for this country
-            self.conn.execute(f"""
-                INSERT INTO {target_table} (
-                    member_id, member_name, enrollment_date, last_flight_date,
-                    tier_code, agent_name, state, country, post_code, dob,
-                    is_active, age, stale_member, last_updated_at
-                )
-                SELECT
-                    member_id, member_name, enrollment_date, last_flight_date,
-                    tier_code, agent_name, state, country, post_code, dob,
-                    is_active, age, stale_member, CURRENT_TIMESTAMP
-                FROM tmp_latest_members
-                WHERE {where_clause};
-            """)
+                self.conn.execute(f"""
+                    DELETE FROM {target_table}
+                    WHERE member_id IN (SELECT member_id FROM tmp_latest_members WHERE country = ?);
+                """, [country_val])
+                self.conn.execute(f"""
+                    INSERT INTO {target_table} (
+                        member_id, member_name, enrollment_date, last_flight_date,
+                        tier_code, agent_name, state, country, post_code, dob,
+                        is_active, age, stale_member, last_updated_at
+                    )
+                    SELECT
+                        member_id, member_name, enrollment_date, last_flight_date,
+                        tier_code, agent_name, state, country, post_code, dob,
+                        is_active, age, stale_member, CURRENT_TIMESTAMP
+                    FROM tmp_latest_members
+                    WHERE country = ?;
+                """, [country_val])
 
             inserted_count = self.conn.execute(f"SELECT COUNT(*) FROM {target_table}").fetchone()[0]
             country_counts[target_table] = inserted_count

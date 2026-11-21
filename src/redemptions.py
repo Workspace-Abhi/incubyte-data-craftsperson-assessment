@@ -1,10 +1,11 @@
 """Semi-structured JSON redemption feed parser and Loyalty 360 analytical join."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple
 import json
 import duckdb
 from src.validators import parse_and_validate_date, sanitize_string
+from src.models import QuarantineRecord
 
 
 @dataclass
@@ -19,10 +20,11 @@ class FlattenedRedemption:
 
 
 class RedemptionParser:
-    """Parses semi-structured partner redemption feeds and loads into queryable tables."""
+    """Parses semi-structured partner redemption feeds with strict validation."""
 
     def __init__(self, conn: Optional[duckdb.DuckDBPyConnection] = None):
         self.conn = conn or duckdb.connect(":memory:")
+        self.quarantined_redemptions: List[QuarantineRecord] = []
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -33,50 +35,148 @@ class RedemptionParser:
                 member_id VARCHAR NOT NULL,
                 feed_date DATE NOT NULL,
                 txn_date DATE NOT NULL,
-                partner VARCHAR,
-                miles_redeemed INTEGER,
-                status VARCHAR,
+                partner VARCHAR NOT NULL,
+                miles_redeemed INTEGER NOT NULL,
+                status VARCHAR NOT NULL,
                 ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
-    def parse_payload(self, raw_input: Union[str, dict, list]) -> List[FlattenedRedemption]:
-        """Parse raw JSON string, dictionary, or list into flattened redemption records."""
+    def parse_payload(self, raw_input: Union[str, dict, list]) -> Tuple[List[FlattenedRedemption], List[QuarantineRecord]]:
+        """Parse raw JSON into validated flattened redemptions and quarantined DLQ items without data invention."""
         if isinstance(raw_input, str):
             payload = json.loads(raw_input)
         else:
             payload = raw_input
 
-        # Handle either a single feed dictionary or a list of feed dictionaries
         feed_items = payload if isinstance(payload, list) else [payload]
         flattened: List[FlattenedRedemption] = []
+        quarantine: List[QuarantineRecord] = []
 
         for feed in feed_items:
             member_id = sanitize_string(feed.get("member_id"))
             feed_dt_str = sanitize_string(feed.get("feed_date"))
-            feed_date, _ = parse_and_validate_date(feed_dt_str)
-            if not feed_date:
-                feed_date = date.today()
+            feed_date, err = parse_and_validate_date(feed_dt_str)
+            if err or not feed_date:
+                quarantine.append(
+                    QuarantineRecord(
+                        raw_data=feed,
+                        error_reason=f"Invalid feed_date in redemption feed: {err or 'Missing feed_date'}",
+                    )
+                )
+                continue
 
-            redemptions = feed.get("redemptions", [])
+            if not member_id:
+                quarantine.append(
+                    QuarantineRecord(
+                        raw_data=feed,
+                        error_reason="Missing mandatory member_id in redemption feed",
+                    )
+                )
+                continue
+
+            redemptions = feed.get("redemptions")
+            if not isinstance(redemptions, list):
+                quarantine.append(
+                    QuarantineRecord(
+                        raw_data=feed,
+                        error_reason="Invalid or missing 'redemptions' array",
+                    )
+                )
+                continue
+
             for txn in redemptions:
+                if not isinstance(txn, dict):
+                    quarantine.append(
+                        QuarantineRecord(
+                            raw_data={"feed_member_id": member_id, "txn": str(txn)},
+                            error_reason="Transaction item is not a valid JSON object",
+                        )
+                    )
+                    continue
+
+                # 1. Mandatory txn_id
                 txn_id = sanitize_string(txn.get("txn_id"))
-                if not txn_id or not member_id:
-                    continue  # Skip invalid transaction without key
+                if not txn_id:
+                    quarantine.append(
+                        QuarantineRecord(
+                            raw_data=txn,
+                            error_reason="Missing mandatory transaction txn_id",
+                        )
+                    )
+                    continue
 
+                # 2. Mandatory txn_date (do NOT invent/fallback to feed_date)
                 txn_dt_str = sanitize_string(txn.get("txn_date"))
-                txn_date, _ = parse_and_validate_date(txn_dt_str)
-                if not txn_date:
-                    txn_date = feed_date
+                if not txn_dt_str:
+                    quarantine.append(
+                        QuarantineRecord(
+                            raw_data=txn,
+                            error_reason="Missing mandatory transaction txn_date",
+                        )
+                    )
+                    continue
 
-                partner = sanitize_string(txn.get("partner")) or "Unknown"
-                miles = txn.get("miles_redeemed")
+                txn_date, err = parse_and_validate_date(txn_dt_str)
+                if err or not txn_date:
+                    quarantine.append(
+                        QuarantineRecord(
+                            raw_data=txn,
+                            error_reason=f"Invalid txn_date: {err}",
+                        )
+                    )
+                    continue
+
+                # 3. Mandatory miles_redeemed (do NOT invent/default to 0)
+                raw_miles = txn.get("miles_redeemed")
+                if raw_miles is None:
+                    quarantine.append(
+                        QuarantineRecord(
+                            raw_data=txn,
+                            error_reason="Missing mandatory miles_redeemed",
+                        )
+                    )
+                    continue
                 try:
-                    miles_int = int(miles) if miles is not None else 0
+                    miles_int = int(raw_miles)
+                    if miles_int < 0:
+                        quarantine.append(
+                            QuarantineRecord(
+                                raw_data=txn,
+                                error_reason="Invalid miles_redeemed: value cannot be negative",
+                            )
+                        )
+                        continue
                 except (ValueError, TypeError):
-                    miles_int = 0
+                    quarantine.append(
+                        QuarantineRecord(
+                            raw_data=txn,
+                            error_reason=f"Invalid miles_redeemed data type: '{raw_miles}'",
+                        )
+                    )
+                    continue
 
-                status = sanitize_string(txn.get("status")) or "COMPLETED"
+                # 4. Mandatory status & partner
+                status = sanitize_string(txn.get("status"))
+                if not status:
+                    quarantine.append(
+                        QuarantineRecord(
+                            raw_data=txn,
+                            error_reason="Missing mandatory transaction status",
+                        )
+                    )
+                    continue
+                status = status.upper()
+
+                partner = sanitize_string(txn.get("partner"))
+                if not partner:
+                    quarantine.append(
+                        QuarantineRecord(
+                            raw_data=txn,
+                            error_reason="Missing mandatory partner airline name",
+                        )
+                    )
+                    continue
 
                 flattened.append(
                     FlattenedRedemption(
@@ -90,7 +190,8 @@ class RedemptionParser:
                     )
                 )
 
-        return flattened
+        self.quarantined_redemptions.extend(quarantine)
+        return flattened, quarantine
 
     def load_redemptions(self, redemptions: List[FlattenedRedemption]) -> int:
         """Insert or replace flattened redemptions into DuckDB staging."""
@@ -110,7 +211,6 @@ class RedemptionParser:
             for r in redemptions
         ]
 
-        # Use INSERT OR REPLACE / ON CONFLICT to maintain idempotency
         self.conn.executemany("""
             INSERT OR REPLACE INTO stg_redemptions_flattened (
                 txn_id, member_id, feed_date, txn_date, partner, miles_redeemed, status
@@ -120,14 +220,19 @@ class RedemptionParser:
         return len(rows)
 
     def build_loyalty_360_mart(self, source_members_table: str = "tmp_latest_members") -> List[Dict[str, Any]]:
-        """Join member profile data with flattened redemption aggregates to generate Member Loyalty 360 mart."""
+        """Join member profile data with flattened redemptions.
+
+        Sums only COMPLETED miles into total_miles_redeemed, tracking pending miles separately.
+        """
         self.conn.execute(f"""
             CREATE OR REPLACE TABLE member_loyalty_360 AS
             WITH RedemptionAggs AS (
                 SELECT
                     member_id,
                     COUNT(DISTINCT txn_id) AS total_redemptions,
-                    COALESCE(SUM(miles_redeemed), 0) AS total_miles_redeemed,
+                    -- Only sum COMPLETED miles into redeemed balance
+                    COALESCE(SUM(CASE WHEN UPPER(status) = 'COMPLETED' THEN miles_redeemed ELSE 0 END), 0) AS total_miles_redeemed,
+                    COALESCE(SUM(CASE WHEN UPPER(status) = 'PENDING' THEN miles_redeemed ELSE 0 END), 0) AS pending_miles_redeemed,
                     MAX(txn_date) AS last_redemption_date,
                     MODE(partner) AS top_partner
                 FROM stg_redemptions_flattened
@@ -144,6 +249,7 @@ class RedemptionParser:
                 m.stale_member,
                 COALESCE(r.total_redemptions, 0) AS total_redemptions,
                 COALESCE(r.total_miles_redeemed, 0) AS total_miles_redeemed,
+                COALESCE(r.pending_miles_redeemed, 0) AS pending_miles_redeemed,
                 r.last_redemption_date,
                 COALESCE(r.top_partner, 'None') AS top_partner,
                 CURRENT_TIMESTAMP AS last_sync_at

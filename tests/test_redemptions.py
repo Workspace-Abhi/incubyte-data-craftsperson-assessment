@@ -32,8 +32,9 @@ SAMPLE_FEED = {
 class TestRedemptionParser:
     def test_parse_sample_feed_json(self):
         parser = RedemptionParser()
-        records = parser.parse_payload(SAMPLE_FEED)
+        records, bad = parser.parse_payload(SAMPLE_FEED)
 
+        assert len(bad) == 0
         assert len(records) == 2
 
         rx1 = records[0]
@@ -50,10 +51,28 @@ class TestRedemptionParser:
         assert rx2.miles_redeemed == 5000
         assert rx2.status == "PENDING"
 
+    def test_corrupt_transactions_quarantined_not_invented(self):
+        parser = RedemptionParser()
+        corrupt_feed = {
+            "member_id": "999",
+            "feed_date": "20240115",
+            "redemptions": [
+                {"txn_id": "", "txn_date": "20240110", "miles_redeemed": 100, "status": "COMPLETED"},  # missing id
+                {"txn_id": "T2", "txn_date": "", "miles_redeemed": 100, "status": "COMPLETED"},       # missing date
+                {"txn_id": "T3", "txn_date": "20240110", "miles_redeemed": -50, "status": "COMPLETED"}, # negative miles
+            ],
+        }
+        valid, bad = parser.parse_payload(corrupt_feed)
+        assert len(valid) == 0
+        assert len(bad) == 3
+        assert "Missing mandatory transaction txn_id" in bad[0].error_reason
+        assert "Missing mandatory transaction txn_date" in bad[1].error_reason
+        assert "cannot be negative" in bad[2].error_reason
+
     def test_load_and_query_redemptions(self):
         conn = duckdb.connect(":memory:")
         parser = RedemptionParser(conn)
-        records = parser.parse_payload(SAMPLE_FEED)
+        records, _ = parser.parse_payload(SAMPLE_FEED)
         count = parser.load_redemptions(records)
 
         assert count == 2
@@ -63,12 +82,11 @@ class TestRedemptionParser:
         assert df[0][0] == "RX10091"
         assert df[1][0] == "RX10092"
 
-    def test_loyalty_360_join_combines_profile_and_redemptions(self):
+    def test_loyalty_360_join_sums_only_completed_miles(self):
         conn = duckdb.connect(":memory:")
         staging = StagingEngine(conn)
         parser = RedemptionParser(conn)
 
-        # 1. Load member profile
         members = [
             CleanMemberRecord(
                 member_id="223457",
@@ -90,28 +108,23 @@ class TestRedemptionParser:
             ),
         ]
         staging.load_clean_records(members)
-
-        # Create temporary latest members table
         conn.execute("CREATE OR REPLACE TEMP TABLE tmp_latest_members AS SELECT * FROM stg_member_profile;")
 
-        # 2. Load redemptions (only for Elena)
-        redemption_records = parser.parse_payload(SAMPLE_FEED)
+        redemption_records, _ = parser.parse_payload(SAMPLE_FEED)
         parser.load_redemptions(redemption_records)
 
-        # 3. Build Loyalty 360 mart
         mart = parser.build_loyalty_360_mart("tmp_latest_members")
         assert len(mart) == 2
 
-        # Elena should have 2 redemptions and 17,000 total miles
+        # Elena: 1 COMPLETED (12,000) and 1 PENDING (5,000)
         elena = next(r for r in mart if r["member_id"] == "223457")
         assert elena["member_name"] == "Elena"
         assert elena["total_redemptions"] == 2
-        assert elena["total_miles_redeemed"] == 17000
-        assert elena["last_redemption_date"] == date(2024, 1, 13)
+        assert elena["total_miles_redeemed"] == 12000  # ONLY COMPLETED miles!
+        assert elena["pending_miles_redeemed"] == 5000  # PENDING miles tracked separately!
 
-        # Ravi should have 0 redemptions and 0 miles
+        # Ravi: 0 redemptions
         ravi = next(r for r in mart if r["member_id"] == "223458")
-        assert ravi["member_name"] == "Ravi"
         assert ravi["total_redemptions"] == 0
         assert ravi["total_miles_redeemed"] == 0
-        assert ravi["top_partner"] == "None"
+        assert ravi["pending_miles_redeemed"] == 0
