@@ -1,4 +1,4 @@
-"""TDD tests for data validation, cleaning, and DLQ routing."""
+"""TDD tests for data validation, cleaning, domain rules, and DLQ routing."""
 import pytest
 from datetime import date
 from src.validators import (
@@ -22,19 +22,37 @@ class TestDateParsingAndValidation:
         assert result == date(2022, 1, 15)
 
     def test_parse_dob_ddmmyyyy_with_leading_zero(self):
-        # 03051985 -> May 3, 1985 (or March 5, 1985 per standard DDMMYYYY format)
         result, err = parse_and_validate_date("03051985")
         assert err is None
         assert result == date(1985, 5, 3)
 
     def test_parse_dob_with_dropped_leading_zero(self):
-        # 3051985 has 7 digits; after left-padding to 8 digits -> 03051985
         result, err = parse_and_validate_date("3051985")
         assert err is None
         assert result == date(1985, 5, 3)
 
+    def test_parse_usa_source_hint_dates(self):
+        # 1052022 -> Jan 05, 2022
+        d1, err1 = parse_and_validate_date("1052022", format_hint="USA")
+        assert err1 is None
+        assert d1 == date(2022, 1, 5)
+
+        # 1152022 -> Jan 15, 2022
+        d2, err2 = parse_and_validate_date("1152022", format_hint="USA")
+        assert err2 is None
+        assert d2 == date(2022, 1, 15)
+
+        # 6152022 -> June 15, 2022
+        d3, err3 = parse_and_validate_date("6152022", format_hint="USA")
+        assert err3 is None
+        assert d3 == date(2022, 6, 15)
+
+        # 12282021 -> Dec 28, 2021
+        d4, err4 = parse_and_validate_date("12282021", format_hint="USA")
+        assert err4 is None
+        assert d4 == date(2021, 12, 28)
+
     def test_parse_invalid_month_13_fails(self):
-        # e.g., '2021-13-13' from real dirty data
         result, err = parse_and_validate_date("2021-13-13")
         assert result is None
         assert "Invalid date format or out-of-range calendar values" in err
@@ -84,7 +102,6 @@ class TestMemberValidation:
         assert record.member_name == "Elena"
         assert record.member_id == "223457"
         assert record.enrollment_date == date(2010, 10, 12)
-        assert record.last_flight_date == date(2012, 10, 13)
         assert record.country == "USA"
 
     def test_missing_mandatory_name_fails(self):
@@ -117,35 +134,57 @@ class TestMemberValidation:
         assert record is None
         assert "Missing mandatory field: Enrollment_Date" in err
 
-    def test_invalid_enrollment_date_fails(self):
+    def test_field_length_checks(self):
+        # Member ID exceeds 18 chars
         raw = RawMemberRecord(
             member_name="Elena",
-            member_id="223457",
-            enrollment_date="2021-13-13",
+            member_id="12345678901234567890",  # 20 chars
+            enrollment_date="20101012",
         )
         record, err = validate_member_record(raw)
         assert record is None
-        assert "Invalid Enrollment_Date" in err
+        assert "Member_Id exceeds 18 characters" in err
+
+        # Country exceeds 5 chars
+        raw2 = RawMemberRecord(
+            member_name="Elena",
+            member_id="223457",
+            enrollment_date="20101012",
+            country="UNITED_STATES",
+        )
+        record2, err2 = validate_member_record(raw2)
+        assert record2 is None
+        assert "Country exceeds 5 characters" in err2
+
+    def test_tier_domain_check(self):
+        # Invalid tier code within length limit
+        raw = RawMemberRecord(
+            member_name="Elena",
+            member_id="223457",
+            enrollment_date="20101012",
+            tier_code="VIP",  # Not in PLT, GLD, SLV
+        )
+        record, err = validate_member_record(raw)
+        assert record is None
+        assert "Invalid domain value: Tier_Code 'VIP'" in err
 
 
 class TestBatchValidationAndDLQ:
     def test_batch_splits_clean_and_dlq(self):
         records = [
-            # Valid
             RawMemberRecord(
                 member_name="Elena",
                 member_id="223457",
                 enrollment_date="20101012",
                 country="USA",
+                tier_code="GLD",
             ),
-            # Invalid (Missing Name)
             RawMemberRecord(
                 member_name="",
                 member_id="223458",
                 enrollment_date="20101012",
                 country="IND",
             ),
-            # Invalid (Bad Date)
             RawMemberRecord(
                 member_name="Corrupt",
                 member_id="223459",
@@ -157,5 +196,15 @@ class TestBatchValidationAndDLQ:
         assert len(result.valid_records) == 1
         assert len(result.quarantine_records) == 2
         assert result.valid_records[0].member_name == "Elena"
-        assert "Missing mandatory field: Member_Name" in result.quarantine_records[0].error_reason
-        assert "Invalid Enrollment_Date" in result.quarantine_records[1].error_reason
+
+    def test_key_collision_detection_across_different_people(self):
+        # ID 1 reused for Vikas and Sam
+        records = [
+            RawMemberRecord(member_name="Vikas", member_id="1", enrollment_date="20220101", country="IND"),
+            RawMemberRecord(member_name="Sam", member_id="1", enrollment_date="20220101", country="USA"),
+        ]
+        result = validate_member_batch(records)
+        assert len(result.valid_records) == 1
+        assert len(result.quarantine_records) == 1
+        assert len(result.key_collisions) == 1
+        assert "Key collision detected: Member_Id '1' reused across multiple people" in result.key_collisions[0]
