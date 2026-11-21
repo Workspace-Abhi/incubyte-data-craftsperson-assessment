@@ -1,4 +1,9 @@
-"""Unit tests validating Snowflake DDL and Transformation SQL scripts."""
+"""Contract and text inspection tests validating Snowflake DDL, transformations, and smoke test scripts.
+
+NOTE: These tests inspect file contents, structural syntax contracts, and SQL integrity
+locally via pytest. Real behavioral execution and query evaluation is performed directly
+against a live Snowflake warehouse using `sql/snowflake/smoke_test.sql`.
+"""
 from pathlib import Path
 
 
@@ -6,8 +11,32 @@ def test_ddl_and_transformations_scripts_exist():
     base_sql_dir = Path(__file__).resolve().parent.parent / "sql" / "snowflake"
     ddl_path = base_sql_dir / "ddl.sql"
     transformations_path = base_sql_dir / "transformations.sql"
+    smoke_test_path = base_sql_dir / "smoke_test.sql"
     assert ddl_path.exists(), "ddl.sql must exist"
     assert transformations_path.exists(), "transformations.sql must exist"
+    assert smoke_test_path.exists(), "smoke_test.sql must exist"
+
+
+def test_snowflake_smoke_test_coverage():
+    smoke_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "smoke_test.sql"
+    content = smoke_path.read_text(encoding="utf-8")
+
+    # Schema isolation
+    assert "SKYPOINTS_SMOKE_TEST" in content
+
+    # Coverage for all 7 test cases
+    assert "Member moving country" in content
+    assert "Composite key: Same ID in IND_SYS and USA_SYS both survive" in content
+    assert "Rename collision: older name quarantined in DLQ" in content
+    assert "Rename collision: newer name kept in target table" in content
+    assert "Empty-string tier code: treated as null, not quarantined" in content
+    assert "Unmapped country: quarantined in DLQ at staging" in content
+    assert "Bad redemption feed_date: quarantined into DLQ" in content
+    assert "Duplicate txn_id replay: idempotent merge" in content
+
+    # Final assertion status reporting
+    assert "SELECT" in content
+    assert "CASE WHEN expected_value = actual_value THEN 'PASS' ELSE 'FAIL' END AS status" in content
 
 
 def test_snowflake_ddl_ref_country_map():
