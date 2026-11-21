@@ -395,3 +395,47 @@ class TestRedemptionParser:
         ambig_winner = [m for m in mart2 if m["member_id"] == "AMBIG_1"][0]
         assert ambig_winner["total_miles_redeemed"] == 3500
         assert ambig_winner["total_redemptions"] == 1
+
+    def test_pending_only_member_refreshed_when_ambiguity_resolves(self):
+        """P-M: Members with only PENDING redemptions (0 completed miles) are refreshed when ambiguity flips."""
+        conn = duckdb.connect(":memory:")
+        staging = StagingEngine(conn)
+        parser = RedemptionParser(conn)
+
+        members = [
+            CleanMemberRecord(member_id="PENDING_1", member_name="P1", enrollment_date=date(2020, 1, 1), country="IND", source_system="SYS_A"),
+            CleanMemberRecord(member_id="PENDING_1", member_name="P2", enrollment_date=date(2020, 1, 1), country="USA", source_system="SYS_B"),
+        ]
+        staging.load_clean_records(members)
+        conn.execute("CREATE OR REPLACE TEMP TABLE tmp_latest_members AS SELECT * FROM stg_member_profile;")
+
+        payload = {
+            "feed_date": "20240115",
+            "member_id": "PENDING_1",
+            "redemptions": [
+                {
+                    "txn_id": "TXN_PEND_1",
+                    "txn_date": "20240110",
+                    "partner": "SkyPoints",
+                    "miles_redeemed": 5000,
+                    "status": "PENDING",
+                }
+            ],
+        }
+        redemptions, _ = parser.parse_payload(payload)
+        parser.load_redemptions(redemptions)
+
+        # Flagged ambiguous -> 0 pending in mart
+        parser.quarantine_ambiguous_redemptions("tmp_latest_members")
+        mart1 = parser.build_loyalty_360_mart("tmp_latest_members")
+        for m in mart1:
+            if m["member_id"] == "PENDING_1":
+                assert m["pending_miles_redeemed"] == 0
+
+        # Ambiguity resolves
+        conn.execute("DELETE FROM tmp_latest_members WHERE source_system = 'SYS_B';")
+        parser.quarantine_ambiguous_redemptions("tmp_latest_members")
+        mart2 = parser.build_loyalty_360_mart("tmp_latest_members")
+        winner = [m for m in mart2 if m["member_id"] == "PENDING_1"][0]
+        assert winner["pending_miles_redeemed"] == 5000
+        assert winner["total_miles_redeemed"] == 0

@@ -308,6 +308,8 @@ class RedemptionParser:
                     is_active VARCHAR DEFAULT 'A',
                     age INTEGER,
                     stale_member VARCHAR(1),
+                    extract_date DATE,
+                    extract_ts TIMESTAMP,
                     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (source_system, member_id)
                 );
@@ -315,15 +317,15 @@ class RedemptionParser:
 
         self.conn.execute("""
             CREATE OR REPLACE TEMP VIEW members_all AS
-            SELECT * FROM table_india
+            SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_india
             UNION ALL
-            SELECT * FROM table_usa
+            SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_usa
             UNION ALL
-            SELECT * FROM table_canada
+            SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_canada
             UNION ALL
-            SELECT * FROM table_philippines
+            SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_philippines
             UNION ALL
-            SELECT * FROM table_australia;
+            SELECT source_system, member_id, member_name, country, tier_code, enrollment_date, last_flight_date, age, stale_member FROM table_australia;
         """)
 
         members_source = source_members_table if source_members_table else "members_all"

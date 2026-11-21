@@ -8,6 +8,11 @@
 -- STEP 5: Loyalty 360 Analytical Mart (Sums Only COMPLETED Miles)
 -- ----------------------------------------------------------------------------
 
+-- Snapshot pre-update status to track exact state transitions
+CREATE OR REPLACE TEMPORARY TABLE PRE_UPDATE_REDEMPTION_STATUS AS
+SELECT TXN_ID, IS_AMBIGUOUS
+FROM STG_REDEMPTIONS_FLATTENED;
+
 -- 1. Flag and idempotently quarantine ambiguous redemptions whose MEMBER_ID spans multiple SOURCE_SYSTEMs
 -- History is preserved non-destructively by setting IS_AMBIGUOUS flag rather than deleting.
 -- Scoped update: touches only incoming batch redemptions, touched member profiles, or rows whose ambiguity status flipped
@@ -35,6 +40,13 @@ WHERE (r.BATCH_ID = $run_batch_id)
         GROUP BY MEMBER_ID
         HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
    ));
+
+-- Detect members whose redemption ambiguity status flipped in this run
+CREATE OR REPLACE TEMPORARY TABLE AMBIGUITY_CHANGED_MEMBERS AS
+SELECT DISTINCT cur.MEMBER_ID
+FROM STG_REDEMPTIONS_FLATTENED cur
+JOIN PRE_UPDATE_REDEMPTION_STATUS prev ON cur.TXN_ID = prev.TXN_ID
+WHERE cur.IS_AMBIGUOUS <> prev.IS_AMBIGUOUS;
 
 MERGE INTO RAW_DLQ_QUARANTINE target
 USING (
@@ -77,16 +89,9 @@ USING (
         WHERE red.BATCH_ID = $run_batch_id
         UNION
         -- 3. Members whose redemptions status flipped (became ambiguous or became resolved)
-        SELECT m.SOURCE_SYSTEM, r.MEMBER_ID
-        FROM STG_REDEMPTIONS_FLATTENED r
-        JOIN MEMBERS_ALL_CURRENT m ON r.MEMBER_ID = m.MEMBER_ID
-        LEFT JOIN MEMBER_LOYALTY_360 l ON m.SOURCE_SYSTEM = l.SOURCE_SYSTEM AND m.MEMBER_ID = l.MEMBER_ID
-        WHERE (
-            -- Member was ambiguous, now resolved (mart has 0 or NULL miles, but redemptions exist and are valid)
-            (r.IS_AMBIGUOUS = FALSE AND COALESCE(l.TOTAL_MILES_REDEEMED, 0) = 0)
-            -- Or member became ambiguous (mart has > 0 miles, but redemptions are now flagged ambiguous)
-            OR (r.IS_AMBIGUOUS = TRUE AND COALESCE(l.TOTAL_MILES_REDEEMED, 0) > 0)
-        )
+        SELECT m.SOURCE_SYSTEM, m.MEMBER_ID
+        FROM MEMBERS_ALL_CURRENT m
+        JOIN AMBIGUITY_CHANGED_MEMBERS acm ON m.MEMBER_ID = acm.MEMBER_ID
         UNION
         -- 4. Members with redemptions whose member profile in MEMBERS_ALL spans multiple source systems (ambiguity detected)
         SELECT m.SOURCE_SYSTEM, m.MEMBER_ID

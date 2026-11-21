@@ -73,7 +73,7 @@ def test_pipeline_orphan_redemptions_detection(tmp_path):
     assert result.orphan_redemptions[0]["txn_id"] == "ORPHAN_TXN_01"
 
 
-def test_pipeline_with_raw_company_excel_files():
+def test_pipeline_with_raw_company_files():
     root_dir = Path(__file__).resolve().parent.parent.parent
     data_dir = root_dir / "data"
     raw_dir = data_dir / "raw"
@@ -82,12 +82,14 @@ def test_pipeline_with_raw_company_excel_files():
     flat_file = str(samples_dir / "sample_member_profile.dat")
     json_file = str(samples_dir / "sample_redemptions.json")
     xlsx_mappings = {
-        str(raw_dir / "IND.xlsx"): "IND",
-        str(raw_dir / "USA.xlsx"): "USA",
         str(raw_dir / "AUS.xlsx"): "AUS",
     }
+    csv_mappings = {
+        str(raw_dir / "IND.csv"): "IND",
+        str(raw_dir / "USA.csv"): "USA",
+    }
     date_hints = {
-        str(raw_dir / "USA.xlsx"): "USA",
+        str(raw_dir / "USA.csv"): "USA",
     }
 
     pipeline = SkyPointsPipeline()
@@ -96,6 +98,7 @@ def test_pipeline_with_raw_company_excel_files():
         flat_file_path=flat_file,
         json_file_path=json_file,
         xlsx_file_mappings=xlsx_mappings,
+        csv_file_mappings=csv_mappings,
         csv_date_format_hints=date_hints,
         reference_date=ref_date,
     )

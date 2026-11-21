@@ -329,3 +329,30 @@ class TestBatchValidationAndDLQ:
         # Deterministic: line_no 2 > line_no 1, so Alice B wins regardless of input order
         assert res1.valid_records[0].member_name == "Alice B"
         assert res2.valid_records[0].member_name == "Alice B"
+
+    def test_collision_intraday_timestamp_wins_over_alphabetical_file_order(self):
+        from datetime import datetime
+        # rec_morning has file 'zzz.dat' (sorts last) but earlier time (9am)
+        rec_morning = RawMemberRecord(
+            member_name="Morning Name",
+            member_id="TIME_1",
+            enrollment_date="20200101",
+            country="USA",
+            source_file="zzz_20240115_090000.dat",
+            extract_ts=datetime(2024, 1, 15, 9, 0, 0),
+            line_no=99,
+        )
+        # rec_afternoon has file 'aaa.dat' (sorts first) but later time (3pm)
+        rec_afternoon = RawMemberRecord(
+            member_name="Afternoon Name",
+            member_id="TIME_1",
+            enrollment_date="20200101",
+            country="USA",
+            source_file="aaa_20240115_150000.dat",
+            extract_ts=datetime(2024, 1, 15, 15, 0, 0),
+            line_no=1,
+        )
+
+        res = validate_member_batch([rec_morning, rec_afternoon])
+        assert res.valid_records[0].member_name == "Afternoon Name"
+        assert res.quarantine_records[0].error_reason == "Key collision: superseded by newer record"
