@@ -122,73 +122,95 @@ class CountryRouter:
             WHERE rn = 1;
         """)
 
-        # 2. Get distinct countries present in the deduplicated batch
+        # 2. Ensure all canonical country target tables exist
+        for tbl in CANONICAL_TABLE_MAP.values():
+            self.ensure_target_table(tbl)
+
+        # 3. Incremental Country Merges: Delete existing row only if incoming batch record is newer by P4 order
         countries_df = self.conn.execute("SELECT DISTINCT country FROM tmp_latest_members").fetchall()
         country_counts: Dict[str, int] = {}
 
+        # View of all current records across country tables to prevent older late-arriving records from inserting
+        union_sql = " UNION ALL ".join([f"SELECT source_system, member_id, extract_date, last_flight_date, enrollment_date FROM {t}" for t in CANONICAL_TABLE_MAP.values()])
+        self.conn.execute(f"CREATE OR REPLACE TEMP VIEW tmp_all_country_members AS {union_sql};")
+
         for (country_val,) in countries_df:
             target_table = self.get_table_name_for_country(country_val)
-            self.ensure_target_table(target_table)
 
-            if country_val is None:
-                self.conn.execute(f"""
-                    DELETE FROM {target_table}
-                    WHERE (source_system, member_id) IN (
-                        SELECT source_system, member_id FROM tmp_latest_members WHERE country IS NULL
-                    );
-                """)
-                self.conn.execute(f"""
-                    INSERT INTO {target_table} (
-                        source_system, member_id, member_name, enrollment_date, last_flight_date,
-                        tier_code, agent_name, state, country, post_code, dob,
-                        is_active, age, stale_member, extract_date, line_no, last_updated_at
-                    )
-                    SELECT
-                        source_system, member_id, member_name, enrollment_date, last_flight_date,
-                        tier_code, agent_name, state, country, post_code, dob,
-                        is_active, age, stale_member, extract_date, line_no, CURRENT_TIMESTAMP
-                    FROM tmp_latest_members
-                    WHERE country IS NULL;
-                """)
-            else:
-                self.conn.execute(f"""
-                    DELETE FROM {target_table}
-                    WHERE (source_system, member_id) IN (
-                        SELECT source_system, member_id FROM tmp_latest_members WHERE country = ?
-                    );
-                """, [country_val])
-                self.conn.execute(f"""
-                    INSERT INTO {target_table} (
-                        source_system, member_id, member_name, enrollment_date, last_flight_date,
-                        tier_code, agent_name, state, country, post_code, dob,
-                        is_active, age, stale_member, extract_date, line_no, last_updated_at
-                    )
-                    SELECT
-                        source_system, member_id, member_name, enrollment_date, last_flight_date,
-                        tier_code, agent_name, state, country, post_code, dob,
-                        is_active, age, stale_member, extract_date, line_no, CURRENT_TIMESTAMP
-                    FROM tmp_latest_members
-                    WHERE country = ?;
-                """, [country_val])
+            # Delete existing row in target_table ONLY if incoming record is newer by P4 order
+            self.conn.execute(f"""
+                DELETE FROM {target_table} target
+                WHERE EXISTS (
+                    SELECT 1 FROM tmp_latest_members src
+                    WHERE src.source_system = target.source_system
+                      AND src.member_id = target.member_id
+                      AND src.country = ?
+                      AND (
+                          COALESCE(src.extract_date, DATE '1970-01-01') > COALESCE(target.extract_date, DATE '1970-01-01')
+                          OR (
+                              COALESCE(src.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
+                              AND COALESCE(src.last_flight_date, src.enrollment_date) > COALESCE(target.last_flight_date, target.enrollment_date)
+                          )
+                          OR target.extract_date IS NULL
+                      )
+                );
+            """, [country_val])
+
+            # Insert incoming record if it does not already exist in any country table with a newer date
+            self.conn.execute(f"""
+                INSERT INTO {target_table} (
+                    source_system, member_id, member_name, enrollment_date, last_flight_date,
+                    tier_code, agent_name, state, country, post_code, dob,
+                    is_active, age, stale_member, extract_date, line_no, last_updated_at
+                )
+                SELECT
+                    src.source_system, src.member_id, src.member_name, src.enrollment_date, src.last_flight_date,
+                    src.tier_code, src.agent_name, src.state, src.country, src.post_code, src.dob,
+                    src.is_active, src.age, src.stale_member, src.extract_date, src.line_no, CURRENT_TIMESTAMP
+                FROM tmp_latest_members src
+                WHERE src.country = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM tmp_all_country_members existing
+                      WHERE existing.source_system = src.source_system
+                        AND existing.member_id = src.member_id
+                        AND (
+                            COALESCE(existing.extract_date, DATE '1970-01-01') > COALESCE(src.extract_date, DATE '1970-01-01')
+                            OR (
+                                COALESCE(existing.extract_date, DATE '1970-01-01') = COALESCE(src.extract_date, DATE '1970-01-01')
+                                AND COALESCE(existing.last_flight_date, existing.enrollment_date) >= COALESCE(src.last_flight_date, src.enrollment_date)
+                            )
+                        )
+                  );
+            """, [country_val])
 
             inserted_count = self.conn.execute(f"SELECT COUNT(*) FROM {target_table}").fetchone()[0]
             country_counts[target_table] = inserted_count
 
-        # 3. Clean up migration: remove members from other country tables if their latest country changed
-        all_tables = [self.get_table_name_for_country(c[0]) for c in countries_df]
-        for tbl in all_tables:
+        # 4. Clean up migration: remove members from other country tables only if incoming record has a different country AND is newer
+        all_canonical_tables = list(set(CANONICAL_TABLE_MAP.values()))
+        for tbl in all_canonical_tables:
             self.conn.execute(f"""
-                DELETE FROM {tbl}
-                WHERE (source_system, member_id) IN (
-                    SELECT source_system, member_id FROM tmp_latest_members
-                    WHERE '{tbl}' <> CASE
-                        WHEN UPPER(country) IN ('IND', 'INDIA') THEN 'table_india'
-                        WHEN UPPER(country) IN ('USA') THEN 'table_usa'
-                        WHEN UPPER(country) IN ('CAN', 'CANADA') THEN 'table_canada'
-                        WHEN UPPER(country) IN ('PHIL', 'PH') THEN 'table_philippines'
-                        WHEN UPPER(country) IN ('AU', 'AUS') THEN 'table_australia'
-                        ELSE 'table_unknown'
-                    END
+                DELETE FROM {tbl} target
+                WHERE EXISTS (
+                    SELECT 1 FROM tmp_latest_members d
+                    WHERE d.source_system = target.source_system
+                      AND d.member_id = target.member_id
+                      AND '{tbl}' <> CASE
+                          WHEN UPPER(d.country) IN ('IND', 'INDIA') THEN 'table_india'
+                          WHEN UPPER(d.country) IN ('USA') THEN 'table_usa'
+                          WHEN UPPER(d.country) IN ('CAN', 'CANADA') THEN 'table_canada'
+                          WHEN UPPER(d.country) IN ('PHIL', 'PH') THEN 'table_philippines'
+                          WHEN UPPER(d.country) IN ('AU', 'AUS') THEN 'table_australia'
+                          ELSE 'table_unknown'
+                      END
+                      AND (
+                          COALESCE(d.extract_date, DATE '1970-01-01') > COALESCE(target.extract_date, DATE '1970-01-01')
+                          OR (
+                              COALESCE(d.extract_date, DATE '1970-01-01') = COALESCE(target.extract_date, DATE '1970-01-01')
+                              AND COALESCE(d.last_flight_date, d.enrollment_date) > COALESCE(target.last_flight_date, target.enrollment_date)
+                          )
+                          OR target.extract_date IS NULL
+                      )
                 );
             """)
 

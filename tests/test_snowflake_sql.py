@@ -150,6 +150,9 @@ def test_snowflake_ddl_ref_country_map():
     assert "FROM TABLE_AU" in content
     assert "SELECT *" not in content.split("MEMBERS_ALL AS")[1].split("SEMI-STRUCTURED")[0]
 
+    # P6: Dynamic query-time recomputed view MEMBERS_ALL_CURRENT
+    assert "CREATE OR REPLACE VIEW MEMBERS_ALL_CURRENT AS" in content
+
 
 def test_snowflake_transformations_and_merge():
     sql_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "transformations.sql"
@@ -161,8 +164,9 @@ def test_snowflake_transformations_and_merge():
     assert "generated_country_merges.sql" in content
     assert "!source sql/snowflake/generated_country_merges.sql" in content
 
-    # Batch tracking & landing filters
+    # Batch tracking & landing filters (P6: incremental per-batch staging truncate)
     assert "SET run_batch_id = UUID_STRING();" in content
+    assert "TRUNCATE TABLE STG_MEMBER_PROFILE;" in content
     assert "WHERE PROCESSED_AT IS NULL" in content
     assert "UPDATE RAW_MEMBER_LANDING" in finalize_content
     assert "UPDATE RAW_REDEMPTIONS_LANDING" in finalize_content
@@ -170,6 +174,7 @@ def test_snowflake_transformations_and_merge():
 
     # Task 1 & 2: SOURCE_SYSTEM composite dedup and member loyalty mart
     assert "PARTITION BY SOURCE_SYSTEM, MEMBER_ID" in content
+    assert "WHERE BATCH_ID = $run_batch_id" in content
     assert "Ambiguous member_id across source systems" in finalize_content
     assert "m.SOURCE_SYSTEM" in finalize_content
 
@@ -216,10 +221,12 @@ def test_snowflake_transformations_and_merge():
     assert "WHERE IS_AMBIGUOUS = FALSE" in finalize_content
     assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in finalize_content
 
-    # Task 4: Idempotent MERGE into MEMBER_LOYALTY_360 from MEMBERS_ALL for affected members
+    # Task 4 & P6: Incremental MERGE into MEMBER_LOYALTY_360 from MEMBERS_ALL_CURRENT for touched members
     assert "MERGE INTO MEMBER_LOYALTY_360 target" in finalize_content
-    assert "FROM MEMBERS_ALL m" in finalize_content
-    assert "WHERE EXISTS" in finalize_content.split("STEP 5")[1]
+    assert "FROM MEMBERS_ALL_CURRENT m" in finalize_content
+    assert "TouchedMembers AS" in finalize_content
+    assert "PartnerCounts AS" in finalize_content
+    assert "ORDER BY COUNT(*) DESC, r.PARTNER ASC" in finalize_content
     assert "red.BATCH_ID = $run_batch_id" in finalize_content
     assert "CREATE OR REPLACE TABLE MEMBER_LOYALTY_360" not in finalize_content
 
@@ -240,6 +247,9 @@ def test_generated_country_merges_matches_script_output():
     assert "MERGE INTO TABLE_AU target" in actual
     assert "target.SOURCE_SYSTEM = src.SOURCE_SYSTEM AND target.MEMBER_ID = src.MEMBER_ID" in actual
     assert "target.POST_CODE = src.POST_CODE" in actual
+    assert "WHEN MATCHED AND (" in actual
+    assert "src.EXTRACT_DATE > target.EXTRACT_DATE" in actual
+    assert "d.EXTRACT_DATE > target.EXTRACT_DATE" in actual
     assert "SELECT *" not in actual
     assert "d.SOURCE_SYSTEM = target.SOURCE_SYSTEM" in actual
     assert "d.COUNTRY <> 'IND'" in actual

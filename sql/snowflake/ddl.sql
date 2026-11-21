@@ -244,6 +244,47 @@ UNION ALL
 SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_DATE, LINE_NO, LAST_UPDATED_AT FROM TABLE_AU;
 
 -- ----------------------------------------------------------------------------
+-- 4C. DYNAMIC UNIFIED MEMBERS VIEW (Query-Time Recalculation)
+-- Dynamically recomputes AGE and STALE_MEMBER at query time relative to CURRENT_DATE()
+-- while preserving static stored attributes in the country tables.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL_CURRENT AS
+SELECT
+    SOURCE_SYSTEM,
+    MEMBER_ID,
+    MEMBER_NAME,
+    ENROLLMENT_DATE,
+    LAST_FLIGHT_DATE,
+    TIER_CODE,
+    AGENT_NAME,
+    STATE,
+    COUNTRY,
+    POST_CODE,
+    DOB,
+    IS_ACTIVE,
+    -- Dynamically recomputed exact calendar age at query time
+    CASE
+        WHEN DOB IS NULL THEN NULL
+        ELSE DATEDIFF(year, DOB, CURRENT_DATE()) - 
+             CASE 
+                WHEN (MONTH(CURRENT_DATE()) < MONTH(DOB)) 
+                  OR (MONTH(CURRENT_DATE()) = MONTH(DOB) 
+                      AND DAY(CURRENT_DATE()) < DAY(DOB)) 
+                THEN 1 ELSE 0 
+             END
+    END AS AGE,
+    -- Dynamically recomputed stale member flag at query time (>90 days since flight)
+    CASE 
+        WHEN LAST_FLIGHT_DATE IS NULL THEN 'Y'
+        WHEN DATEDIFF(day, LAST_FLIGHT_DATE, CURRENT_DATE()) > 90 THEN 'Y'
+        ELSE 'N'
+    END AS STALE_MEMBER,
+    EXTRACT_DATE,
+    LINE_NO,
+    LAST_UPDATED_AT
+FROM MEMBERS_ALL;
+
+-- ----------------------------------------------------------------------------
 -- 5. SEMI-STRUCTURED REDEMPTION TABLES
 -- ----------------------------------------------------------------------------
 

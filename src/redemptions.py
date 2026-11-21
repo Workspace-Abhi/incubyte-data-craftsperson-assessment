@@ -330,18 +330,32 @@ class RedemptionParser:
 
         self.conn.execute(f"""
             CREATE OR REPLACE TABLE member_loyalty_360 AS
-            WITH RedemptionAggs AS (
+            WITH PartnerCounts AS (
                 SELECT
                     member_id,
-                    COUNT(DISTINCT txn_id) AS total_redemptions,
-                    -- Only sum COMPLETED miles into redeemed balance
-                    COALESCE(SUM(CASE WHEN UPPER(status) = 'COMPLETED' THEN miles_redeemed ELSE 0 END), 0) AS total_miles_redeemed,
-                    COALESCE(SUM(CASE WHEN UPPER(status) = 'PENDING' THEN miles_redeemed ELSE 0 END), 0) AS pending_miles_redeemed,
-                    MAX(txn_date) AS last_redemption_date,
-                    MODE(partner) AS top_partner
+                    partner,
+                    COUNT(*) AS cnt,
+                    ROW_NUMBER() OVER (PARTITION BY member_id ORDER BY COUNT(*) DESC, partner ASC) AS rn
                 FROM stg_redemptions_flattened
-                WHERE is_ambiguous = FALSE
-                GROUP BY member_id
+                WHERE is_ambiguous = FALSE AND partner IS NOT NULL
+                GROUP BY member_id, partner
+            ),
+            TopPartner AS (
+                SELECT member_id, partner AS top_partner
+                FROM PartnerCounts
+                WHERE rn = 1
+            ),
+            RedemptionAggs AS (
+                SELECT
+                    r.member_id,
+                    COUNT(DISTINCT r.txn_id) AS total_redemptions,
+                    -- Only sum COMPLETED miles into redeemed balance
+                    COALESCE(SUM(CASE WHEN UPPER(r.status) = 'COMPLETED' THEN r.miles_redeemed ELSE 0 END), 0) AS total_miles_redeemed,
+                    COALESCE(SUM(CASE WHEN UPPER(r.status) = 'PENDING' THEN r.miles_redeemed ELSE 0 END), 0) AS pending_miles_redeemed,
+                    MAX(r.txn_date) AS last_redemption_date
+                FROM stg_redemptions_flattened r
+                WHERE r.is_ambiguous = FALSE
+                GROUP BY r.member_id
             )
             SELECT
                 m.source_system,
@@ -357,10 +371,11 @@ class RedemptionParser:
                 COALESCE(r.total_miles_redeemed, 0) AS total_miles_redeemed,
                 COALESCE(r.pending_miles_redeemed, 0) AS pending_miles_redeemed,
                 r.last_redemption_date,
-                COALESCE(r.top_partner, 'None') AS top_partner,
+                COALESCE(tp.top_partner, 'None') AS top_partner,
                 CURRENT_TIMESTAMP AS last_sync_at
             FROM {members_source} m
-            LEFT JOIN RedemptionAggs r ON m.member_id = r.member_id;
+            LEFT JOIN RedemptionAggs r ON m.member_id = r.member_id
+            LEFT JOIN TopPartner tp ON m.member_id = tp.member_id;
         """)
 
         cur = self.conn.cursor()

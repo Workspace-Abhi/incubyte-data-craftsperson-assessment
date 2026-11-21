@@ -16,6 +16,9 @@
 -- ----------------------------------------------------------------------------
 SET run_batch_id = UUID_STRING();
 
+-- STG_MEMBER_PROFILE is per-batch; truncate before loading the incoming batch
+TRUNCATE TABLE STG_MEMBER_PROFILE;
+
 -- ----------------------------------------------------------------------------
 -- STEP 1: Quarantine Bad Landing Records into RAW_DLQ_QUARANTINE
 -- Sanitizes empty strings '', 'NULL', and 'NONE' before checking constraints.
@@ -293,6 +296,7 @@ WITH RankedMembers AS (
             ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, LINE_NO DESC
         ) AS RN
     FROM STG_MEMBER_PROFILE
+    WHERE BATCH_ID = $run_batch_id
 )
 SELECT
     SOURCE_SYSTEM,

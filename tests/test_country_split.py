@@ -216,3 +216,93 @@ class TestCountrySplitAndDeduplication:
         assert len(usa_rows) == 1, "Newer extract date in USA must win"
         assert usa_rows[0]["member_id"] == "M_RECENCY"
         assert usa_rows[0]["country"] == "USA"
+
+    def test_older_late_arriving_file_does_not_overwrite_newer_row(self):
+        engine = StagingEngine()
+        router = CountryRouter(engine.conn)
+
+        # Batch 1: Newer record arrives in USA
+        batch1 = [
+            CleanMemberRecord(
+                member_id="M_LATE",
+                member_name="Late Arrival Test",
+                enrollment_date=date(2020, 1, 1),
+                last_flight_date=date(2024, 2, 1),
+                country="USA",
+                tier_code="PLT",
+                extract_date=date(2024, 2, 1),
+            )
+        ]
+        engine.load_clean_records(batch1)
+        router.execute_country_split()
+
+        usa_rows = router.get_country_records("table_usa")
+        assert len(usa_rows) == 1
+        assert usa_rows[0]["tier_code"] == "PLT"
+        assert usa_rows[0]["extract_date"] == date(2024, 2, 1)
+
+        # Batch 2: Older late-arriving record for same member with tier_code="SLV" arrives
+        batch2 = [
+            CleanMemberRecord(
+                member_id="M_LATE",
+                member_name="Late Arrival Test",
+                enrollment_date=date(2020, 1, 1),
+                last_flight_date=date(2024, 1, 1),
+                country="USA",
+                tier_code="SLV",
+                extract_date=date(2024, 1, 1),
+            )
+        ]
+        engine.load_clean_records(batch2)
+        router.execute_country_split()
+
+        # The newer PLT record in table_usa must NOT be overwritten
+        usa_rows_after = router.get_country_records("table_usa")
+        assert len(usa_rows_after) == 1
+        assert usa_rows_after[0]["tier_code"] == "PLT", "Older late-arriving record must not overwrite newer row"
+        assert usa_rows_after[0]["extract_date"] == date(2024, 2, 1)
+
+    def test_old_record_does_not_delete_newer_row_in_another_country(self):
+        engine = StagingEngine()
+        router = CountryRouter(engine.conn)
+
+        # Batch 1: Member currently resides in USA (extract 2024-02-01)
+        batch1 = [
+            CleanMemberRecord(
+                member_id="M_MIGRATE_PROTECT",
+                member_name="Migration Test",
+                enrollment_date=date(2020, 1, 1),
+                last_flight_date=date(2024, 2, 1),
+                country="USA",
+                tier_code="GLD",
+                extract_date=date(2024, 2, 1),
+            )
+        ]
+        engine.load_clean_records(batch1)
+        router.execute_country_split()
+
+        assert len(router.get_country_records("table_usa")) == 1
+        assert len(router.get_country_records("table_india")) == 0
+
+        # Batch 2: Late-arriving historical record for India (extract 2024-01-01)
+        batch2 = [
+            CleanMemberRecord(
+                member_id="M_MIGRATE_PROTECT",
+                member_name="Migration Test",
+                enrollment_date=date(2020, 1, 1),
+                last_flight_date=date(2024, 1, 1),
+                country="IND",
+                tier_code="SLV",
+                extract_date=date(2024, 1, 1),
+            )
+        ]
+        engine.load_clean_records(batch2)
+        router.execute_country_split()
+
+        # Member must remain in table_usa and NOT be inserted in table_india or deleted from table_usa
+        usa_rows = router.get_country_records("table_usa")
+        ind_rows = router.get_country_records("table_india")
+        assert len(usa_rows) == 1, "Newer record in table_usa must not be deleted by older cross-country record"
+        assert len(ind_rows) == 0, "Older late-arriving record must not be inserted into table_india"
+        assert usa_rows[0]["member_id"] == "M_MIGRATE_PROTECT"
+        assert usa_rows[0]["extract_date"] == date(2024, 2, 1)

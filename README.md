@@ -66,7 +66,8 @@ Production Snowflake DDLs and local DuckDB schemas are implemented in:
 ### Deliverable 2: Staging Load with Derived Columns (`Age` & `Stale_Member`)
 - **`Age`**: Computed dynamically from `DOB` using exact calendar differences (accounting for leap years and month/day progression). Handles 7-digit dropped leading zeros (`3051985` $\rightarrow$ `03051985`).
 - **`Stale_Member`**: Computed as `'Y'` when `DATEDIFF(day, Last_Flight_Date, CURRENT_DATE) > 90` or when `Last_Flight_Date` is NULL; otherwise `'N'`.
-- Code: [`src/staging.py`](src/staging.py) | SQL: [`sql/snowflake/transformations.sql`](sql/snowflake/transformations.sql)
+- **Query-Time Recomputation**: Physical country tables store ingestion-time calculations, while the dynamic view `MEMBERS_ALL_CURRENT` recomputes `Age` and `Stale_Member` dynamically at query time relative to `CURRENT_DATE()`.
+- Code: [`src/staging.py`](src/staging.py) | SQL: [`sql/snowflake/transformations.sql`](sql/snowflake/transformations.sql) | DDL: [`sql/snowflake/ddl.sql`](sql/snowflake/ddl.sql)
 
 ### Deliverable 3: Country Split & "Latest Record Wins" Rule
 - When members move countries, historical records may have older country designations.
@@ -74,21 +75,23 @@ Production Snowflake DDLs and local DuckDB schemas are implemented in:
   ```sql
   ROW_NUMBER() OVER (
       PARTITION BY source_system, member_id 
-      ORDER BY COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC, stg_row_id
+      ORDER BY EXTRACT_DATE DESC, COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC, line_no DESC
   ) AS rn
   ```
-- Only `rn = 1` survives. If a member moved from India to USA, they are cleanly removed from `table_india` and inserted into `table_usa`.
+- Only `rn = 1` survives per batch. Staging is incremental and per-batch (`TRUNCATE TABLE STG_MEMBER_PROFILE`).
+- MERGE and cross-country DELETE operations are recency-guarded: incoming records only update or migrate members if the incoming extract/event date is strictly newer than the target country row. Older late-arriving files never overwrite or delete newer records.
 - Static, drift-free MERGE and cross-country DELETE statements are generated from `CANONICAL_TABLE_MAP` via `scripts/generate_country_merges.py` into `sql/snowflake/generated_country_merges.sql`.
 - Code: [`src/country_router.py`](src/country_router.py) | Generator: [`scripts/generate_country_merges.py`](scripts/generate_country_merges.py)
 
 ### Deliverable 4: Semi-Structured JSON Redemption Feed & 360 Join
 - The nested JSON array of redemptions is parsed and unnested into `stg_redemptions_flattened` (or using Snowflake `LATERAL FLATTEN(input => payload:redemptions)`).
-- Joined back to member profile data (`members_all` unified view) to produce `member_loyalty_360`:
+- Joined back to member profile data (`MEMBERS_ALL_CURRENT` unified view) to produce `member_loyalty_360`:
   - `total_redemptions`: Total count of redemption transactions.
   - `total_miles_redeemed`: Sum of only `COMPLETED` miles redeemed.
   - `pending_miles_redeemed`: Sum of unsettled `PENDING` miles tracked separately.
   - `last_redemption_date`: Most recent redemption activity.
-  - `top_partner`: Member's most frequently used partner airline.
+  - `top_partner`: Member's most frequently used partner airline (ties broken deterministically by highest count then alphabetical order).
+  - Incremental refresh: refreshes redemptions and aggregates only for members touched by the current batch.
 - Code: [`src/redemptions.py`](src/redemptions.py)
 
 ### Deliverable 5: Data Validations & Dead Letter Queue (DLQ)
