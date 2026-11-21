@@ -39,6 +39,7 @@ class StagingEngine:
         """Initialize staging schema in DuckDB."""
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS stg_member_profile (
+                source_system VARCHAR NOT NULL DEFAULT 'FLAT_FILE',
                 member_id VARCHAR NOT NULL,
                 member_name VARCHAR NOT NULL,
                 enrollment_date DATE NOT NULL,
@@ -66,6 +67,7 @@ class StagingEngine:
             age = compute_age(r.dob, reference_date=reference_date)
             stale = compute_stale_member(r.last_flight_date, reference_date=reference_date)
             rows.append((
+                r.source_system or "FLAT_FILE",
                 r.member_id,
                 r.member_name,
                 r.enrollment_date,
@@ -83,10 +85,10 @@ class StagingEngine:
 
         self.conn.executemany("""
             INSERT INTO stg_member_profile (
-                member_id, member_name, enrollment_date, last_flight_date,
+                source_system, member_id, member_name, enrollment_date, last_flight_date,
                 tier_code, agent_name, state, country, post_code, dob,
                 is_active, age, stale_member
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, rows)
 
         return len(rows)

@@ -39,7 +39,8 @@ class CountryRouter:
 
         self.conn.execute(f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
-                member_id VARCHAR PRIMARY KEY,
+                source_system VARCHAR NOT NULL DEFAULT 'FLAT_FILE',
+                member_id VARCHAR NOT NULL,
                 member_name VARCHAR NOT NULL,
                 enrollment_date DATE NOT NULL,
                 last_flight_date DATE,
@@ -52,7 +53,8 @@ class CountryRouter:
                 is_active VARCHAR DEFAULT 'A',
                 age INTEGER,
                 stale_member VARCHAR(1),
-                last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source_system, member_id)
             );
         """)
 
@@ -61,14 +63,14 @@ class CountryRouter:
 
         Parameterized execution eliminates SQL injection risks.
         """
-        # 1. Deduplicate staging using window function (latest event wins)
+        # 1. Deduplicate staging using window function (latest event wins per source_system and member_id)
         self.conn.execute("""
             CREATE OR REPLACE TEMP TABLE tmp_latest_members AS
             WITH Ranked AS (
                 SELECT
                     *,
                     ROW_NUMBER() OVER (
-                        PARTITION BY member_id
+                        PARTITION BY source_system, member_id
                         ORDER BY COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC
                     ) AS rn
                 FROM stg_member_profile
@@ -89,16 +91,18 @@ class CountryRouter:
             if country_val is None:
                 self.conn.execute(f"""
                     DELETE FROM {target_table}
-                    WHERE member_id IN (SELECT member_id FROM tmp_latest_members WHERE country IS NULL);
+                    WHERE (source_system, member_id) IN (
+                        SELECT source_system, member_id FROM tmp_latest_members WHERE country IS NULL
+                    );
                 """)
                 self.conn.execute(f"""
                     INSERT INTO {target_table} (
-                        member_id, member_name, enrollment_date, last_flight_date,
+                        source_system, member_id, member_name, enrollment_date, last_flight_date,
                         tier_code, agent_name, state, country, post_code, dob,
                         is_active, age, stale_member, last_updated_at
                     )
                     SELECT
-                        member_id, member_name, enrollment_date, last_flight_date,
+                        source_system, member_id, member_name, enrollment_date, last_flight_date,
                         tier_code, agent_name, state, country, post_code, dob,
                         is_active, age, stale_member, CURRENT_TIMESTAMP
                     FROM tmp_latest_members
@@ -107,16 +111,18 @@ class CountryRouter:
             else:
                 self.conn.execute(f"""
                     DELETE FROM {target_table}
-                    WHERE member_id IN (SELECT member_id FROM tmp_latest_members WHERE country = ?);
+                    WHERE (source_system, member_id) IN (
+                        SELECT source_system, member_id FROM tmp_latest_members WHERE country = ?
+                    );
                 """, [country_val])
                 self.conn.execute(f"""
                     INSERT INTO {target_table} (
-                        member_id, member_name, enrollment_date, last_flight_date,
+                        source_system, member_id, member_name, enrollment_date, last_flight_date,
                         tier_code, agent_name, state, country, post_code, dob,
                         is_active, age, stale_member, last_updated_at
                     )
                     SELECT
-                        member_id, member_name, enrollment_date, last_flight_date,
+                        source_system, member_id, member_name, enrollment_date, last_flight_date,
                         tier_code, agent_name, state, country, post_code, dob,
                         is_active, age, stale_member, CURRENT_TIMESTAMP
                     FROM tmp_latest_members
@@ -131,8 +137,8 @@ class CountryRouter:
         for tbl in all_tables:
             self.conn.execute(f"""
                 DELETE FROM {tbl}
-                WHERE member_id IN (
-                    SELECT member_id FROM tmp_latest_members
+                WHERE (source_system, member_id) IN (
+                    SELECT source_system, member_id FROM tmp_latest_members
                     WHERE '{tbl}' <> CASE
                         WHEN UPPER(country) IN ('IND', 'INDIA') THEN 'table_india'
                         WHEN UPPER(country) IN ('USA') THEN 'table_usa'

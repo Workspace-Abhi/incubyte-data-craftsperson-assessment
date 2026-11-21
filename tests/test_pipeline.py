@@ -21,7 +21,6 @@ def test_full_pipeline_with_sample_files():
         json_file_path=json_file,
         csv_file_mappings=csv_mappings,
         reference_date=ref_date,
-        namespace_csv_ids=True,
     )
 
     metrics = result.metrics

@@ -70,6 +70,7 @@ def read_pipe_delimited_file(file_path: FilePath) -> List[RawMemberRecord]:
                     dob=dob,
                     is_active=is_active,
                     source_file=path.name,
+                    source_system="FLAT_FILE",
                     date_format_hint="FLAT_FILE",
                 )
             )
@@ -81,7 +82,6 @@ def read_csv_file(
     file_path: FilePath,
     default_country: Optional[str] = None,
     date_format_hint: Optional[str] = None,
-    namespace_ids_by_country: bool = False,
 ) -> List[RawMemberRecord]:
     """Read CSV files (e.g. IND.csv, USA.csv, AUS.csv) with flexible column mapping."""
     records: List[RawMemberRecord] = []
@@ -93,6 +93,8 @@ def read_csv_file(
     hint = date_format_hint
     if hint is None and "USA" in path.name.upper():
         hint = "USA"
+
+    src_system = path.stem.upper() if path.stem else "CSV"
 
     with open(path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -107,21 +109,17 @@ def read_csv_file(
             tier = norm_row.get("tiercode") or norm_row.get("tier_type") or norm_row.get("tier_code")
             country = norm_row.get("country") or default_country
 
-            # Prevent cross-file ID collision if namespacing enabled
-            member_id = raw_id
-            if namespace_ids_by_country and raw_id and country:
-                member_id = f"{country}_{raw_id}"
-
             records.append(
                 RawMemberRecord(
                     member_name=member_name,
-                    member_id=member_id,
+                    member_id=raw_id,
                     enrollment_date=enroll_dt,
                     last_flight_date=flight_dt,
                     tier_code=tier,
                     country=country,
                     dob=dob,
                     source_file=path.name,
+                    source_system=src_system,
                     date_format_hint=hint,
                 )
             )

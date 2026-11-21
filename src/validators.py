@@ -200,6 +200,7 @@ def validate_member_record(raw: RawMemberRecord) -> Tuple[Optional[CleanMemberRe
         dob=dob_date,
         is_active=is_active,
         source_file=raw.source_file,
+        source_system=raw.source_system,
     ), None
 
 
@@ -207,8 +208,8 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
     """Validate a batch of raw records, detecting key collisions and routing errors to DLQ."""
     result = ValidationResult()
 
-    # Track seen member IDs to detect intra-batch key collisions with differing names
-    seen_members: Dict[str, str] = {}
+    # Track seen (source_system, member_id) to detect collisions within the same source system
+    seen_members: Dict[Tuple[str, str], str] = {}
 
     for raw in records:
         clean, err = validate_member_record(raw)
@@ -220,13 +221,13 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
                 )
             )
         else:
-            # Key collision check: same ID but conflicting member name
-            mid = clean.member_id
+            # Key collision check: same (source_system, member_id) but conflicting member name
+            key = (clean.source_system, clean.member_id)
             mname = clean.member_name.lower()
-            if mid in seen_members and seen_members[mid] != mname:
+            if key in seen_members and seen_members[key] != mname:
                 collision_msg = (
-                    f"Key collision detected: Member_Id '{mid}' reused across multiple people "
-                    f"('{seen_members[mid]}' vs '{clean.member_name}') in source {raw.source_file or 'batch'}"
+                    f"Key collision detected: Member_Id '{clean.member_id}' reused across multiple people "
+                    f"('{seen_members[key]}' vs '{clean.member_name}') in source {clean.source_system}"
                 )
                 result.key_collisions.append(collision_msg)
                 result.quarantine_records.append(
@@ -236,7 +237,7 @@ def validate_member_batch(records: List[RawMemberRecord]) -> ValidationResult:
                     )
                 )
             else:
-                seen_members[mid] = mname
+                seen_members[key] = mname
                 result.valid_records.append(clean)
 
     return result

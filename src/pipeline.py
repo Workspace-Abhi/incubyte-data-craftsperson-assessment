@@ -47,7 +47,6 @@ class SkyPointsPipeline:
         json_file_path: Optional[str] = None,
         csv_file_mappings: Optional[Dict[str, str]] = None,
         reference_date: Optional[date] = None,
-        namespace_csv_ids: bool = True,
     ) -> PipelineResult:
         """Execute end-to-end pipeline.
 
@@ -72,7 +71,6 @@ class SkyPointsPipeline:
                     read_csv_file(
                         csv_path,
                         default_country=default_country,
-                        namespace_ids_by_country=namespace_csv_ids,
                     )
                 )
 

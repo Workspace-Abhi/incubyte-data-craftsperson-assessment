@@ -18,6 +18,7 @@ class RawMemberRecord:
     dob: Optional[str] = None
     is_active: Optional[str] = None
     source_file: Optional[str] = None
+    source_system: str = "FLAT_FILE"
     date_format_hint: Optional[str] = None
 
 
@@ -35,6 +36,7 @@ class CleanMemberRecord:
     dob: Optional[date] = None
     is_active: Optional[str] = "A"
     source_file: Optional[str] = None
+    source_system: str = "FLAT_FILE"
 
 
 @dataclass

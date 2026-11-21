@@ -128,3 +128,59 @@ class TestRedemptionParser:
         assert ravi["total_redemptions"] == 0
         assert ravi["total_miles_redeemed"] == 0
         assert ravi["pending_miles_redeemed"] == 0
+
+    def test_ambiguous_member_id_across_source_systems_quarantined(self):
+        conn = duckdb.connect(":memory:")
+        staging = StagingEngine(conn)
+        parser = RedemptionParser(conn)
+
+        # Member ID "1" exists in both IND source and USA source
+        members = [
+            CleanMemberRecord(
+                member_id="1",
+                member_name="Vikas",
+                enrollment_date=date(2020, 1, 1),
+                country="IND",
+                source_system="IND",
+            ),
+            CleanMemberRecord(
+                member_id="1",
+                member_name="Sam",
+                enrollment_date=date(2020, 1, 1),
+                country="USA",
+                source_system="USA",
+            ),
+        ]
+        staging.load_clean_records(members)
+        conn.execute("CREATE OR REPLACE TEMP TABLE tmp_latest_members AS SELECT * FROM stg_member_profile;")
+
+        # Redemption feed for member_id "1"
+        payload = {
+            "feed_date": "20230501",
+            "member_id": "1",
+            "redemptions": [
+                {
+                    "txn_id": "TXN_AMBIG_1",
+                    "txn_date": "20230415",
+                    "partner": "SkyPoints",
+                    "miles_redeemed": 3000,
+                    "status": "COMPLETED",
+                }
+            ],
+        }
+        redemptions, _ = parser.parse_payload(payload)
+        parser.load_redemptions(redemptions)
+
+        # Building the mart should detect ambiguity and quarantine the redemption
+        mart = parser.build_loyalty_360_mart("tmp_latest_members")
+        assert len(mart) == 2
+
+        # Neither member should get the redemption
+        for m in mart:
+            assert m["total_redemptions"] == 0
+            assert m["total_miles_redeemed"] == 0
+
+        # Redemption is quarantined
+        ambig_q = [q for q in parser.quarantined_redemptions if q.error_reason == "Ambiguous member_id across source systems"]
+        assert len(ambig_q) == 1
+        assert ambig_q[0].raw_data["txn_id"] == "TXN_AMBIG_1"

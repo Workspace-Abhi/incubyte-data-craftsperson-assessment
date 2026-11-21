@@ -58,7 +58,7 @@ def main():
     print(f"Data Directory: {data_dir}")
     print(f"Ingesting Flat File: {flat_file.name}")
     print(f"Ingesting Partner JSON: {json_file.name}")
-    print("Ingesting Legacy Country CSVs (namespaced to prevent cross-file collision): IND.csv, USA.csv, AUS.csv")
+    print("Ingesting Legacy Country CSVs (tagged by source_system): IND.csv, USA.csv, AUS.csv")
 
     pipeline = SkyPointsPipeline()
     # Fixed reference date matching assessment data timeframe
@@ -68,7 +68,6 @@ def main():
         json_file_path=str(json_file) if json_file.exists() else None,
         csv_file_mappings={p: c for p, c in csv_mappings.items() if Path(p).exists()},
         reference_date=ref_date,
-        namespace_csv_ids=True,
     )
 
     print_section("1. INGESTION & DATA QUALITY VALIDATION METRICS")
