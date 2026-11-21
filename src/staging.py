@@ -92,5 +92,8 @@ class StagingEngine:
         return len(rows)
 
     def get_staged_records(self) -> List[Dict[str, Any]]:
-        """Fetch all staged records as a list of dictionaries."""
-        return self.conn.execute("SELECT * FROM stg_member_profile").fetchdf().to_dict(orient="records")
+        """Fetch all staged records as a list of dictionaries with native Python types."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM stg_member_profile")
+        cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
