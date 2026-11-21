@@ -24,6 +24,11 @@ def test_snowflake_ddl_ref_country_map():
     assert "SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE'" in content
     assert "PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)" in content
 
+    # Task 2: CANONICAL_CODE in REF_COUNTRY_MAP
+    assert "CANONICAL_CODE       VARCHAR(10)      NOT NULL" in content
+    assert "'IND' AS canonical" in content
+    assert "'AUS', 'AU', 'TABLE_AU'" in content
+
 
 def test_snowflake_transformations_scripting_and_merge():
     sql_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "transformations.sql"
@@ -46,17 +51,26 @@ def test_snowflake_transformations_scripting_and_merge():
     assert "m.TARGET_TABLE <> :1" in content
 
     # Unmapped country quarantine
-    assert "Unmapped or missing country" in content
+    assert "Unmapped country: Country is required and cannot be empty" in content
+    assert "'Unmapped country'" in content
     assert "LEFT JOIN REF_COUNTRY_MAP" in content
 
-    # Parity with Python validator
+    # Parity with Python validator & string sanitization
+    assert "NULLIF(TRIM(" in content
+    assert "'NULL', 'NONE'" in content
     assert "Invalid Post_Code: must be numeric" in content
     assert "Invalid domain value: Tier_Code not in (PLT, GLD, SLV)" in content
     assert "Invalid domain value: Is_Active must be in (A, I)" in content
     assert "Invalid Last_Flight_Date: unparseable calendar date" in content
 
+    # Key collisions resolution before dedupe
+    assert "Key collision: superseded by newer record" in content
+    assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
+
     # Redemptions DLQ & Idempotent MERGE
     assert "STG_REDEMPTIONS_FLATTENED" in content
+    assert "Invalid feed_date in redemption feed" in content
+    assert "CURRENT_DATE()" not in content.split("STEP 4")[1].split("STEP 5")[0]
     assert "Invalid miles_redeemed: value cannot be negative" in content
     assert "MERGE INTO STG_REDEMPTIONS_FLATTENED" in content
     assert "target.TXN_ID = src.TXN_ID" in content
