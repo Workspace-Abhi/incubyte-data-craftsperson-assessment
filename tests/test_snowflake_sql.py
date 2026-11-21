@@ -154,6 +154,10 @@ def test_snowflake_ddl_ref_country_map():
     # P6: Dynamic query-time recomputed view MEMBERS_ALL_CURRENT
     assert "CREATE OR REPLACE VIEW MEMBERS_ALL_CURRENT AS" in content
 
+    # Schema evolution & idempotent upgrades for existing schemas
+    assert "ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS" in content
+    assert "ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS POST_CODE" in content
+
 
 def test_snowflake_transformations_and_merge():
     sql_path = Path(__file__).resolve().parent.parent / "sql" / "snowflake" / "transformations.sql"
