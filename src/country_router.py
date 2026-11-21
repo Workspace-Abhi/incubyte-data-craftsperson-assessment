@@ -108,7 +108,7 @@ class CountryRouter:
                     *,
                     ROW_NUMBER() OVER (
                         PARTITION BY source_system, member_id
-                        ORDER BY COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC
+                        ORDER BY COALESCE(last_flight_date, enrollment_date) DESC, ingested_at DESC, COALESCE(source_file, '') DESC
                     ) AS rn
                 FROM stg_member_profile
             )

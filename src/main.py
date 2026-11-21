@@ -80,7 +80,13 @@ def main():
     print(f"  Valid Staged Records       : {m.valid_records_count}")
     print(f"  Quarantined (DLQ) Records  : {m.quarantined_records_count}")
     print(f"  Key Collisions Detected    : {m.key_collisions_count}")
+    print(f"  Data Quality Warnings      : {m.warnings_count}")
     print(f"  Orphan Redemptions Detected: {len(result.orphan_redemptions)}")
+
+    if result.warnings:
+        print("\n  [Data Quality Warnings]")
+        for w in result.warnings:
+            print(f"    ! {w}")
 
     if result.quarantined_records:
         print("\n  [Dead Letter Queue Samples (Quarantined)]")

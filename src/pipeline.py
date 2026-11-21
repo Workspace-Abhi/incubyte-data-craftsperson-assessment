@@ -17,6 +17,7 @@ class PipelineMetrics:
     valid_records_count: int = 0
     quarantined_records_count: int = 0
     key_collisions_count: int = 0
+    warnings_count: int = 0
     country_table_counts: Dict[str, int] = field(default_factory=dict)
     total_redemptions_parsed: int = 0
     quarantined_redemptions_count: int = 0
@@ -30,6 +31,7 @@ class PipelineResult:
     key_collisions: List[str]
     loyalty_360_data: List[Dict[str, Any]]
     country_data: Dict[str, List[Dict[str, Any]]]
+    warnings: List[str] = field(default_factory=list)
     orphan_redemptions: List[Dict[str, Any]] = field(default_factory=list)
 
 
@@ -135,6 +137,7 @@ class SkyPointsPipeline:
             valid_records_count=len(val_result.valid_records),
             quarantined_records_count=len(all_quarantine),
             key_collisions_count=len(val_result.key_collisions),
+            warnings_count=len(val_result.warnings),
             country_table_counts=country_counts,
             total_redemptions_parsed=redemptions_count,
             quarantined_redemptions_count=len(self.redemption_parser.quarantined_redemptions),
@@ -145,6 +148,7 @@ class SkyPointsPipeline:
             metrics=metrics,
             quarantined_records=all_quarantine,
             key_collisions=val_result.key_collisions,
+            warnings=val_result.warnings,
             loyalty_360_data=loyalty_360,
             country_data=country_data,
             orphan_redemptions=orphan_redemptions,

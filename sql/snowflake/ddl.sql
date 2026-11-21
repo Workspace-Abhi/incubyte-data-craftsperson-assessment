@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS STG_MEMBER_PROFILE (
     IS_ACTIVE            VARCHAR(1)       DEFAULT 'A',
     AGE                  INTEGER,         -- Derived: Exact calendar age
     STALE_MEMBER         VARCHAR(1),      -- Derived: 'Y' if days since Flight_Date > 90 else 'N'
+    SOURCE_FILE_NAME     VARCHAR(255),
     INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
     CONSTRAINT PK_STG_MEMBER PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID) RELY
 )

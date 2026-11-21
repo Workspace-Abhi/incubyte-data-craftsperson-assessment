@@ -64,9 +64,10 @@ def test_snowflake_transformations_and_merge():
     assert "Invalid domain value: Is_Active must be in (A, I)" in content
     assert "Invalid Last_Flight_Date: unparseable calendar date" in content
 
-    # Key collisions resolution before dedupe
+    # Key collisions resolution before dedupe & tie-breaking
     assert "Key collision: superseded by newer record" in content
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
+    assert "ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, SOURCE_FILE_NAME" in content
 
     # Redemptions DLQ & Idempotent MERGE
     assert "STG_REDEMPTIONS_FLATTENED" in content

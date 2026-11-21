@@ -51,3 +51,4 @@ class ValidationResult:
     valid_records: List[CleanMemberRecord] = field(default_factory=list)
     quarantine_records: List[QuarantineRecord] = field(default_factory=list)
     key_collisions: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)

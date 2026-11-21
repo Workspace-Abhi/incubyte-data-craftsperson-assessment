@@ -54,6 +54,15 @@ class RedemptionParser:
         quarantine: List[QuarantineRecord] = []
 
         for feed in feed_items:
+            if not isinstance(feed, dict):
+                quarantine.append(
+                    QuarantineRecord(
+                        raw_data={"item": str(feed)},
+                        error_reason="Feed item is not a valid JSON object",
+                    )
+                )
+                continue
+
             member_id = sanitize_string(feed.get("member_id"))
             feed_dt_str = sanitize_string(feed.get("feed_date"))
             feed_date, err = parse_and_validate_date(feed_dt_str)

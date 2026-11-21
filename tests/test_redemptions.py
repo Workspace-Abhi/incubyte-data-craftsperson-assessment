@@ -312,3 +312,17 @@ class TestRedemptionParser:
         assert q_count_before == q_count_after1 == q_count_after2 == 0
         assert len(mart1) == len(mart2) == 1
         assert mart1[0]["total_miles_redeemed"] == mart2[0]["total_miles_redeemed"] == 4000
+
+    def test_non_dict_feed_item_quarantined_gracefully(self):
+        parser = RedemptionParser()
+        # Feed payload containing a non-dict item (e.g. integer or string) slipped in
+        mixed_feed = [
+            12345,
+            {"member_id": "M1", "feed_date": "20240115", "redemptions": []},
+            "unexpected_string",
+        ]
+        records, bad = parser.parse_payload(mixed_feed)
+        assert len(records) == 0
+        assert len(bad) == 2
+        assert bad[0].error_reason == "Feed item is not a valid JSON object"
+        assert bad[1].error_reason == "Feed item is not a valid JSON object"
