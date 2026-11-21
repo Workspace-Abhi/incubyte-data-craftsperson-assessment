@@ -24,6 +24,7 @@ USING (
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        SOURCE_FILE_NAME,
         EXTRACT_DATE,
         LINE_NO
     FROM DEDUPED_LATEST_MEMBERS src
@@ -41,7 +42,13 @@ USING (
                 OR (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
-                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND (
+                        COALESCE(m.SOURCE_FILE_NAME, '') > COALESCE(src.SOURCE_FILE_NAME, '')
+                        OR (
+                            COALESCE(m.SOURCE_FILE_NAME, '') = COALESCE(src.SOURCE_FILE_NAME, '')
+                            AND COALESCE(m.LINE_NO, 0) > COALESCE(src.LINE_NO, 0)
+                        )
+                    )
                     AND m.COUNTRY <> 'AU'
                 )
             )
@@ -57,7 +64,13 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+        AND (
+            COALESCE(src.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+            OR (
+                COALESCE(src.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+            )
+        )
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -75,6 +88,7 @@ WHEN MATCHED AND (
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
         target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.SOURCE_FILE_NAME = src.SOURCE_FILE_NAME,
         target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
@@ -94,6 +108,7 @@ WHEN NOT MATCHED THEN
         AGE,
         STALE_MEMBER,
         EXTRACT_DATE,
+        SOURCE_FILE_NAME,
         LINE_NO,
         LAST_UPDATED_AT
     )
@@ -113,6 +128,7 @@ WHEN NOT MATCHED THEN
         src.AGE,
         src.STALE_MEMBER,
         src.EXTRACT_DATE,
+        src.SOURCE_FILE_NAME,
         src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
@@ -134,7 +150,13 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+              AND (
+                  COALESCE(d.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+                  OR (
+                      COALESCE(d.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                      AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+                  )
+              )
           )
           OR target.EXTRACT_DATE IS NULL
       )
@@ -160,6 +182,7 @@ USING (
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        SOURCE_FILE_NAME,
         EXTRACT_DATE,
         LINE_NO
     FROM DEDUPED_LATEST_MEMBERS src
@@ -177,7 +200,13 @@ USING (
                 OR (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
-                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND (
+                        COALESCE(m.SOURCE_FILE_NAME, '') > COALESCE(src.SOURCE_FILE_NAME, '')
+                        OR (
+                            COALESCE(m.SOURCE_FILE_NAME, '') = COALESCE(src.SOURCE_FILE_NAME, '')
+                            AND COALESCE(m.LINE_NO, 0) > COALESCE(src.LINE_NO, 0)
+                        )
+                    )
                     AND m.COUNTRY <> 'CAN'
                 )
             )
@@ -193,7 +222,13 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+        AND (
+            COALESCE(src.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+            OR (
+                COALESCE(src.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+            )
+        )
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -211,6 +246,7 @@ WHEN MATCHED AND (
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
         target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.SOURCE_FILE_NAME = src.SOURCE_FILE_NAME,
         target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
@@ -230,6 +266,7 @@ WHEN NOT MATCHED THEN
         AGE,
         STALE_MEMBER,
         EXTRACT_DATE,
+        SOURCE_FILE_NAME,
         LINE_NO,
         LAST_UPDATED_AT
     )
@@ -249,6 +286,7 @@ WHEN NOT MATCHED THEN
         src.AGE,
         src.STALE_MEMBER,
         src.EXTRACT_DATE,
+        src.SOURCE_FILE_NAME,
         src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
@@ -270,7 +308,13 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+              AND (
+                  COALESCE(d.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+                  OR (
+                      COALESCE(d.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                      AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+                  )
+              )
           )
           OR target.EXTRACT_DATE IS NULL
       )
@@ -296,6 +340,7 @@ USING (
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        SOURCE_FILE_NAME,
         EXTRACT_DATE,
         LINE_NO
     FROM DEDUPED_LATEST_MEMBERS src
@@ -313,7 +358,13 @@ USING (
                 OR (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
-                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND (
+                        COALESCE(m.SOURCE_FILE_NAME, '') > COALESCE(src.SOURCE_FILE_NAME, '')
+                        OR (
+                            COALESCE(m.SOURCE_FILE_NAME, '') = COALESCE(src.SOURCE_FILE_NAME, '')
+                            AND COALESCE(m.LINE_NO, 0) > COALESCE(src.LINE_NO, 0)
+                        )
+                    )
                     AND m.COUNTRY <> 'IND'
                 )
             )
@@ -329,7 +380,13 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+        AND (
+            COALESCE(src.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+            OR (
+                COALESCE(src.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+            )
+        )
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -347,6 +404,7 @@ WHEN MATCHED AND (
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
         target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.SOURCE_FILE_NAME = src.SOURCE_FILE_NAME,
         target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
@@ -366,6 +424,7 @@ WHEN NOT MATCHED THEN
         AGE,
         STALE_MEMBER,
         EXTRACT_DATE,
+        SOURCE_FILE_NAME,
         LINE_NO,
         LAST_UPDATED_AT
     )
@@ -385,6 +444,7 @@ WHEN NOT MATCHED THEN
         src.AGE,
         src.STALE_MEMBER,
         src.EXTRACT_DATE,
+        src.SOURCE_FILE_NAME,
         src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
@@ -406,7 +466,13 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+              AND (
+                  COALESCE(d.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+                  OR (
+                      COALESCE(d.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                      AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+                  )
+              )
           )
           OR target.EXTRACT_DATE IS NULL
       )
@@ -432,6 +498,7 @@ USING (
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        SOURCE_FILE_NAME,
         EXTRACT_DATE,
         LINE_NO
     FROM DEDUPED_LATEST_MEMBERS src
@@ -449,7 +516,13 @@ USING (
                 OR (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
-                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND (
+                        COALESCE(m.SOURCE_FILE_NAME, '') > COALESCE(src.SOURCE_FILE_NAME, '')
+                        OR (
+                            COALESCE(m.SOURCE_FILE_NAME, '') = COALESCE(src.SOURCE_FILE_NAME, '')
+                            AND COALESCE(m.LINE_NO, 0) > COALESCE(src.LINE_NO, 0)
+                        )
+                    )
                     AND m.COUNTRY <> 'PHIL'
                 )
             )
@@ -465,7 +538,13 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+        AND (
+            COALESCE(src.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+            OR (
+                COALESCE(src.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+            )
+        )
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -483,6 +562,7 @@ WHEN MATCHED AND (
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
         target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.SOURCE_FILE_NAME = src.SOURCE_FILE_NAME,
         target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
@@ -502,6 +582,7 @@ WHEN NOT MATCHED THEN
         AGE,
         STALE_MEMBER,
         EXTRACT_DATE,
+        SOURCE_FILE_NAME,
         LINE_NO,
         LAST_UPDATED_AT
     )
@@ -521,6 +602,7 @@ WHEN NOT MATCHED THEN
         src.AGE,
         src.STALE_MEMBER,
         src.EXTRACT_DATE,
+        src.SOURCE_FILE_NAME,
         src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
@@ -542,7 +624,13 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+              AND (
+                  COALESCE(d.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+                  OR (
+                      COALESCE(d.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                      AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+                  )
+              )
           )
           OR target.EXTRACT_DATE IS NULL
       )
@@ -568,6 +656,7 @@ USING (
         IS_ACTIVE,
         AGE,
         STALE_MEMBER,
+        SOURCE_FILE_NAME,
         EXTRACT_DATE,
         LINE_NO
     FROM DEDUPED_LATEST_MEMBERS src
@@ -585,7 +674,13 @@ USING (
                 OR (
                     m.EXTRACT_DATE = src.EXTRACT_DATE
                     AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
-                    AND COALESCE(m.LINE_NO, 0) >= COALESCE(src.LINE_NO, 0)
+                    AND (
+                        COALESCE(m.SOURCE_FILE_NAME, '') > COALESCE(src.SOURCE_FILE_NAME, '')
+                        OR (
+                            COALESCE(m.SOURCE_FILE_NAME, '') = COALESCE(src.SOURCE_FILE_NAME, '')
+                            AND COALESCE(m.LINE_NO, 0) > COALESCE(src.LINE_NO, 0)
+                        )
+                    )
                     AND m.COUNTRY <> 'USA'
                 )
             )
@@ -601,7 +696,13 @@ WHEN MATCHED AND (
     OR (
         src.EXTRACT_DATE = target.EXTRACT_DATE
         AND COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-        AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+        AND (
+            COALESCE(src.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+            OR (
+                COALESCE(src.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                AND COALESCE(src.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+            )
+        )
     )
     OR target.EXTRACT_DATE IS NULL
 ) THEN
@@ -619,6 +720,7 @@ WHEN MATCHED AND (
         target.AGE = src.AGE,
         target.STALE_MEMBER = src.STALE_MEMBER,
         target.EXTRACT_DATE = src.EXTRACT_DATE,
+        target.SOURCE_FILE_NAME = src.SOURCE_FILE_NAME,
         target.LINE_NO = src.LINE_NO,
         target.LAST_UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN
@@ -638,6 +740,7 @@ WHEN NOT MATCHED THEN
         AGE,
         STALE_MEMBER,
         EXTRACT_DATE,
+        SOURCE_FILE_NAME,
         LINE_NO,
         LAST_UPDATED_AT
     )
@@ -657,6 +760,7 @@ WHEN NOT MATCHED THEN
         src.AGE,
         src.STALE_MEMBER,
         src.EXTRACT_DATE,
+        src.SOURCE_FILE_NAME,
         src.LINE_NO,
         CURRENT_TIMESTAMP()
     );
@@ -678,7 +782,13 @@ WHERE EXISTS (
           OR (
               d.EXTRACT_DATE = target.EXTRACT_DATE
               AND COALESCE(d.LAST_FLIGHT_DATE, d.ENROLLMENT_DATE) = COALESCE(target.LAST_FLIGHT_DATE, target.ENROLLMENT_DATE)
-              AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+              AND (
+                  COALESCE(d.SOURCE_FILE_NAME, '') > COALESCE(target.SOURCE_FILE_NAME, '')
+                  OR (
+                      COALESCE(d.SOURCE_FILE_NAME, '') = COALESCE(target.SOURCE_FILE_NAME, '')
+                      AND COALESCE(d.LINE_NO, 0) >= COALESCE(target.LINE_NO, 0)
+                  )
+              )
           )
           OR target.EXTRACT_DATE IS NULL
       )

@@ -306,3 +306,129 @@ class TestCountrySplitAndDeduplication:
         assert len(ind_rows) == 0, "Older late-arriving record must not be inserted into table_india"
         assert usa_rows[0]["member_id"] == "M_MIGRATE_PROTECT"
         assert usa_rows[0]["extract_date"] == date(2024, 2, 1)
+
+    def test_same_day_correction_cross_country_equal_line_numbers_moves_member(self):
+        """Claude bug 2: A corrected same-day re-send moving a member from USA to IND
+
+        with equal line numbers must move the member to IND and delete from USA, not leave them in neither table.
+        """
+        engine = StagingEngine()
+        router = CountryRouter(engine.conn)
+
+        # Batch 1: Member initially arrives in USA
+        batch1 = [
+            CleanMemberRecord(
+                member_id="M_SAME_DAY",
+                member_name="Same Day User",
+                enrollment_date=date(2024, 1, 1),
+                last_flight_date=date(2024, 1, 1),
+                country="USA",
+                source_file="file_a.dat",
+                extract_date=date(2024, 1, 15),
+                line_no=5,
+            )
+        ]
+        engine.load_clean_records(batch1)
+        router.execute_country_split()
+
+        assert len(router.get_country_records("table_usa")) == 1
+        assert len(router.get_country_records("table_india")) == 0
+
+        # Batch 2: Same-day re-send correction moving member to IND with equal line_no but later file
+        batch2 = [
+            CleanMemberRecord(
+                member_id="M_SAME_DAY",
+                member_name="Same Day User",
+                enrollment_date=date(2024, 1, 1),
+                last_flight_date=date(2024, 1, 1),
+                country="IND",
+                source_file="file_b.dat",
+                extract_date=date(2024, 1, 15),
+                line_no=5,
+            )
+        ]
+        engine.load_clean_records(batch2)
+        router.execute_country_split()
+
+        usa_rows = router.get_country_records("table_usa")
+        ind_rows = router.get_country_records("table_india")
+
+        assert len(usa_rows) == 0, "Member must be deleted from table_usa"
+        assert len(ind_rows) == 1, "Member must be moved to table_india"
+        assert ind_rows[0]["member_id"] == "M_SAME_DAY"
+        assert ind_rows[0]["country"] == "IND"
+
+    def test_same_country_tie_lower_line_no_does_not_throw_constraint_exception(self):
+        """Claude bug 2: With a same-country tie and lower line number, DuckDB must not throw ConstraintException."""
+        engine = StagingEngine()
+        router = CountryRouter(engine.conn)
+
+        # Batch 1: Member arrives with line_no = 10
+        batch1 = [
+            CleanMemberRecord(
+                member_id="M_SAME_CTRY_TIE",
+                member_name="Winner User",
+                enrollment_date=date(2024, 1, 1),
+                last_flight_date=date(2024, 1, 1),
+                country="USA",
+                source_file="file_1.dat",
+                extract_date=date(2024, 1, 15),
+                line_no=10,
+            )
+        ]
+        engine.load_clean_records(batch1)
+        router.execute_country_split()
+
+        # Batch 2: Same-day record for same member with lower line_no = 5 arrives
+        batch2 = [
+            CleanMemberRecord(
+                member_id="M_SAME_CTRY_TIE",
+                member_name="Loser User",
+                enrollment_date=date(2024, 1, 1),
+                last_flight_date=date(2024, 1, 1),
+                country="USA",
+                source_file="file_1.dat",
+                extract_date=date(2024, 1, 15),
+                line_no=5,
+            )
+        ]
+        engine.load_clean_records(batch2)
+        # Must execute cleanly without ConstraintException
+        router.execute_country_split()
+
+        usa_rows = router.get_country_records("table_usa")
+        assert len(usa_rows) == 1
+        assert usa_rows[0]["member_name"] == "Winner User", "Existing higher line_no record must be retained"
+        assert usa_rows[0]["line_no"] == 10
+
+    def test_two_same_day_files_ranked_by_source_file_name_first(self):
+        """Claude minor: Two same-day files in one batch are ranked by SOURCE_FILE_NAME before line_no."""
+        engine = StagingEngine()
+        router = CountryRouter(engine.conn)
+
+        records = [
+            CleanMemberRecord(
+                member_id="M_FILE_TIE",
+                member_name="File A User",
+                enrollment_date=date(2024, 1, 1),
+                country="USA",
+                source_file="file_20240115_a.dat",
+                extract_date=date(2024, 1, 15),
+                line_no=99,
+            ),
+            CleanMemberRecord(
+                member_id="M_FILE_TIE",
+                member_name="File B User",
+                enrollment_date=date(2024, 1, 1),
+                country="USA",
+                source_file="file_20240115_b.dat",
+                extract_date=date(2024, 1, 15),
+                line_no=1,
+            ),
+        ]
+        engine.load_clean_records(records)
+        router.execute_country_split()
+
+        usa_rows = router.get_country_records("table_usa")
+        assert len(usa_rows) == 1
+        assert usa_rows[0]["member_name"] == "File B User", "File B must win over File A despite lower line_no"

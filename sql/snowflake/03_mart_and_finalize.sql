@@ -66,22 +66,34 @@ WHEN NOT MATCHED THEN
 MERGE INTO MEMBER_LOYALTY_360 target
 USING (
     WITH TouchedMembers AS (
+        -- 1. Members touched in current batch
         SELECT SOURCE_SYSTEM, MEMBER_ID
         FROM DEDUPED_LATEST_MEMBERS
         UNION
+        -- 2. Members with incoming redemptions in current batch
         SELECT m.SOURCE_SYSTEM, red.MEMBER_ID
         FROM STG_REDEMPTIONS_FLATTENED red
         JOIN MEMBERS_ALL_CURRENT m ON red.MEMBER_ID = m.MEMBER_ID
         WHERE red.BATCH_ID = $run_batch_id
         UNION
-        -- Members whose redemptions flipped between ambiguous and unambiguous
-        SELECT m.SOURCE_SYSTEM, red.MEMBER_ID
-        FROM STG_REDEMPTIONS_FLATTENED red
-        JOIN MEMBERS_ALL_CURRENT m ON red.MEMBER_ID = m.MEMBER_ID
-        WHERE red.IS_AMBIGUOUS = FALSE
-          AND red.MEMBER_ID IN (
-              SELECT RECORD_ID FROM RAW_DLQ_QUARANTINE WHERE ERROR_REASON = 'Ambiguous member_id across source systems'
-          )
+        -- 3. Members whose redemptions status flipped (became ambiguous or became resolved)
+        SELECT m.SOURCE_SYSTEM, r.MEMBER_ID
+        FROM STG_REDEMPTIONS_FLATTENED r
+        JOIN MEMBERS_ALL_CURRENT m ON r.MEMBER_ID = m.MEMBER_ID
+        LEFT JOIN MEMBER_LOYALTY_360 l ON m.SOURCE_SYSTEM = l.SOURCE_SYSTEM AND m.MEMBER_ID = l.MEMBER_ID
+        WHERE (
+            -- Member was ambiguous, now resolved (mart has 0 or NULL miles, but redemptions exist and are valid)
+            (r.IS_AMBIGUOUS = FALSE AND COALESCE(l.TOTAL_MILES_REDEEMED, 0) = 0)
+            -- Or member became ambiguous (mart has > 0 miles, but redemptions are now flagged ambiguous)
+            OR (r.IS_AMBIGUOUS = TRUE AND COALESCE(l.TOTAL_MILES_REDEEMED, 0) > 0)
+        )
+        UNION
+        -- 4. Members with redemptions whose member profile in MEMBERS_ALL spans multiple source systems (ambiguity detected)
+        SELECT m.SOURCE_SYSTEM, m.MEMBER_ID
+        FROM MEMBERS_ALL_CURRENT m
+        WHERE m.MEMBER_ID IN (
+            SELECT MEMBER_ID FROM MEMBERS_ALL_CURRENT GROUP BY MEMBER_ID HAVING COUNT(DISTINCT SOURCE_SYSTEM) > 1
+        )
     ),
     PartnerCounts AS (
         SELECT

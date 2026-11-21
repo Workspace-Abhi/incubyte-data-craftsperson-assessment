@@ -20,13 +20,22 @@ SET run_batch_id = UUID_STRING();
 TRUNCATE TABLE STG_MEMBER_PROFILE;
 
 -- Claim unassigned landing rows for this batch run to protect against in-flight arrivals
+-- Clean up any unfinalized DLQ records from prior interrupted runs so the retry starts cleanly
+DELETE FROM RAW_DLQ_QUARANTINE
+WHERE BATCH_ID IN (
+    SELECT DISTINCT BATCH_ID FROM RAW_MEMBER_LANDING WHERE PROCESSED_AT IS NULL AND BATCH_ID IS NOT NULL AND BATCH_ID <> $run_batch_id
+    UNION
+    SELECT DISTINCT BATCH_ID FROM RAW_REDEMPTIONS_LANDING WHERE PROCESSED_AT IS NULL AND BATCH_ID IS NOT NULL AND BATCH_ID <> $run_batch_id
+);
+
+-- Re-claim all unfinalized landing rows (protects against in-flight arrivals and resumes interrupted runs)
 UPDATE RAW_MEMBER_LANDING
 SET BATCH_ID = $run_batch_id
-WHERE PROCESSED_AT IS NULL AND BATCH_ID IS NULL;
+WHERE PROCESSED_AT IS NULL;
 
 UPDATE RAW_REDEMPTIONS_LANDING
 SET BATCH_ID = $run_batch_id
-WHERE PROCESSED_AT IS NULL AND BATCH_ID IS NULL;
+WHERE PROCESSED_AT IS NULL;
 
 -- ----------------------------------------------------------------------------
 -- STEP 1: Quarantine Bad Landing Records into RAW_DLQ_QUARANTINE
@@ -252,7 +261,10 @@ USING (
             s.*,
             ROW_NUMBER() OVER (
                 PARTITION BY s.SOURCE_SYSTEM, s.MEMBER_ID
-                ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.LINE_NO DESC
+                ORDER BY s.EXTRACT_DATE DESC,
+                         COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC,
+                         COALESCE(s.SOURCE_FILE_NAME, '') DESC,
+                         COALESCE(s.LINE_NO, 0) DESC
             ) AS RN
         FROM CurrentBatchMembers s
         JOIN MultiNameGroups g ON s.SOURCE_SYSTEM = g.SOURCE_SYSTEM AND s.MEMBER_ID = g.MEMBER_ID
@@ -308,7 +320,10 @@ WITH RankedMembers AS (
         STG_ROW_ID,
         ROW_NUMBER() OVER (
             PARTITION BY SOURCE_SYSTEM, MEMBER_ID 
-            ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, LINE_NO DESC
+            ORDER BY EXTRACT_DATE DESC,
+                     COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC,
+                     COALESCE(SOURCE_FILE_NAME, '') DESC,
+                     COALESCE(LINE_NO, 0) DESC
         ) AS RN
     FROM STG_MEMBER_PROFILE
     WHERE BATCH_ID = $run_batch_id
@@ -374,7 +389,13 @@ USING (
         OR (
             m.EXTRACT_DATE = src.EXTRACT_DATE
             AND COALESCE(m.LAST_FLIGHT_DATE, m.ENROLLMENT_DATE) = COALESCE(src.LAST_FLIGHT_DATE, src.ENROLLMENT_DATE)
-            AND COALESCE(m.LINE_NO, 0) > COALESCE(src.LINE_NO, 0)
+            AND (
+                COALESCE(m.SOURCE_FILE_NAME, '') > COALESCE(src.SOURCE_FILE_NAME, '')
+                OR (
+                    COALESCE(m.SOURCE_FILE_NAME, '') = COALESCE(src.SOURCE_FILE_NAME, '')
+                    AND COALESCE(m.LINE_NO, 0) > COALESCE(src.LINE_NO, 0)
+                )
+            )
         )
     )
 ) src

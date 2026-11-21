@@ -81,6 +81,10 @@ def test_snowflake_smoke_test_coverage():
     assert "POST_CODE present in country target table" in content
     assert "Out-of-order older record audited in DLQ as superseded" in content
     assert "In-flight landing record processed successfully on subsequent run" in content
+    assert "Interrupted batch: unprocessed landing record with old batch ID is re-claimed and processed" in content
+    assert "Same-day correction with equal line numbers: deleted from old TABLE_USA" in content
+    assert "Same-day correction with equal line numbers: inserted into new TABLE_INDIA" in content
+    assert "Same-country tie with lower line number: existing higher line number record preserved" in content
 
     # Final assertion status reporting
     assert "scenario," in content
@@ -206,8 +210,10 @@ def test_snowflake_transformations_and_merge():
     assert "Key collision: superseded by newer record" in content
     assert "CurrentBatchMembers AS" in content
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
-    assert "ORDER BY s.EXTRACT_DATE DESC, COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.LINE_NO DESC" in content
-    assert "ORDER BY EXTRACT_DATE DESC, COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, LINE_NO DESC" in content
+    assert "ORDER BY s.EXTRACT_DATE DESC," in content
+    assert "COALESCE(s.SOURCE_FILE_NAME, '') DESC," in content
+    assert "ORDER BY EXTRACT_DATE DESC," in content
+    assert "COALESCE(SOURCE_FILE_NAME, '') DESC," in content
     assert "Superseded by existing newer record in core table" in content
     assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in content
     assert "DELETE FROM STG_MEMBER_PROFILE" not in content
