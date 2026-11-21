@@ -64,6 +64,11 @@ def test_snowflake_smoke_test_coverage():
     assert "Rerun delta: STG_REDEMPTIONS_FLATTENED row count unchanged" in content
     assert "Rerun delta: MEMBER_LOYALTY_360 row count unchanged" in content
 
+    # DLQ reject preservation scenarios (P2)
+    assert "DLQ reject preservation: two rows with missing member_id both quarantined" in content
+    assert "DLQ reject preservation: same ID in two source systems both bad both quarantined" in content
+    assert "DLQ reject preservation: same bad row in two batches yields 2 DLQ rows" in content
+
     # Final assertion status reporting
     assert "scenario," in content
     assert "expected," in content
@@ -115,6 +120,10 @@ def test_snowflake_ddl_ref_country_map():
     assert "PROCESSED_AT         TIMESTAMP_NTZ" in content
     assert "STG_ROW_ID          VARCHAR          DEFAULT UUID_STRING()" in content
 
+    # DLQ columns in DDL (P2)
+    assert "RAW_RECORD_HASH      VARCHAR(64)" in content
+    assert "CREATE TABLE IF NOT EXISTS RAW_DLQ_QUARANTINE" in content
+
     # Task 4: MEMBERS_ALL unified country view
     assert "CREATE OR REPLACE VIEW MEMBERS_ALL AS" in content
     assert "SELECT * FROM TABLE_INDIA" in content
@@ -165,6 +174,7 @@ def test_snowflake_transformations_and_merge():
     assert "COUNT(DISTINCT LOWER(TRIM(MEMBER_NAME))) > 1" in content
     assert "ORDER BY COALESCE(s.LAST_FLIGHT_DATE, s.ENROLLMENT_DATE) DESC, s.INGESTED_AT DESC, s.STG_ROW_ID" in content
     assert "ORDER BY COALESCE(LAST_FLIGHT_DATE, ENROLLMENT_DATE) DESC, INGESTED_AT DESC, STG_ROW_ID" in content
+    assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in content
     assert "DELETE FROM STG_MEMBER_PROFILE" not in content
 
     # Redemptions DLQ & Idempotent MERGE
@@ -174,6 +184,9 @@ def test_snowflake_transformations_and_merge():
     assert "Invalid miles_redeemed: value cannot be negative" in content
     assert "MERGE INTO STG_REDEMPTIONS_FLATTENED" in content
     assert "target.TXN_ID = src.TXN_ID" in content
+
+    # Ambiguous redemptions DLQ with RAW_RECORD_HASH
+    assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in finalize_content
 
     # Task 4: Idempotent MERGE into MEMBER_LOYALTY_360 from MEMBERS_ALL for affected members
     assert "MERGE INTO MEMBER_LOYALTY_360 target" in finalize_content

@@ -60,7 +60,18 @@ INSERT INTO RAW_MEMBER_LANDING (
 ('D', 'FLAT_FILE', 'BAD_CTRY_1', 'Hans Gruber', '20220101', '20230101', 'GLD', 'AgentF', 'BER', 'GERMANY', '01011990', 'A', '10115', 'eu_batch.dat'),
 
 -- 6. Null country (quarantined to DLQ)
-('D', 'FLAT_FILE', 'NULL_CTRY_1', 'Jane Doe', '20220101', '20230101', 'GLD', 'AgentG', 'CA', NULL, '01011990', 'A', '90210', 'us_batch.dat');
+('D', 'FLAT_FILE', 'NULL_CTRY_1', 'Jane Doe', '20220101', '20230101', 'GLD', 'AgentG', 'CA', NULL, '01011990', 'A', '90210', 'us_batch.dat'),
+
+-- 7. Two distinct rows with missing member_id in the same batch (both must be quarantined, not suppressed)
+('D', 'FLAT_FILE', NULL, 'Missing ID Alpha', '20220101', '20230101', 'GLD', 'AgentH', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+('D', 'FLAT_FILE', NULL, 'Missing ID Beta', '20220101', '20230101', 'GLD', 'AgentH', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat'),
+
+-- 8. Same ID in two distinct source systems both bad (both must be quarantined)
+('D', 'IND_SYS', 'BAD_DUP_1', 'Bad Ind User', '20220101', '20230101', 'GLD', 'AgentI', 'BER', 'GERMANY', '01011990', 'A', '11001', 'IND_bad.csv'),
+('D', 'USA_SYS', 'BAD_DUP_1', 'Bad Usa User', '20220101', '20230101', 'GLD', 'AgentI', 'BER', 'GERMANY', '01011990', 'A', '10001', 'USA_bad.csv'),
+
+-- 9. Bad row arriving in Batch 1 (will be repeated in Batch 2)
+('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_1.dat');
 
 -- Redemption fixtures
 -- Replay fixture: identical TXN_REPLAY_1 sent twice
@@ -94,7 +105,17 @@ SELECT PARSE_JSON('{
     ]
 }'), '20240115';
 
--- Step 4: Run production pipeline via run_all.sql (Run 1)
+-- Step 4: Run production pipeline via run_all.sql (Run 1: Processes Initial Batches)
+!source sql/snowflake/run_all.sql
+
+-- Step 4B: Load Batch 2 with identical malformed record arriving in a second batch
+INSERT INTO RAW_MEMBER_LANDING (
+    RECORD_TYPE, SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE,
+    TIER_CODE, AGENT_NAME, STATE, COUNTRY, DOB, IS_ACTIVE, POST_CODE, SOURCE_FILE_NAME
+) VALUES
+('D', 'FLAT_FILE', 'REPEAT_BAD_1', 'Repeat Bad Person', '20220101', '20230101', 'INVALID_TIER', 'AgentJ', 'CA', 'USA', '01011990', 'A', '90210', 'batch_2.dat');
+
+-- Step 4C: Run production pipeline for Batch 2 via run_all.sql (Run 2: Processes Batch 2)
 !source sql/snowflake/run_all.sql
 
 -- Step 5: Capture snapshot of mart and table counts BEFORE rerun into temporary table
@@ -108,8 +129,8 @@ SELECT
     (SELECT TO_VARCHAR(COALESCE(TOTAL_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_COMPLETED_MILES,
     (SELECT TO_VARCHAR(COALESCE(PENDING_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_PENDING_MILES;
 
--- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 2)
--- Landing rows have been stamped with PROCESSED_AT, so a rerun processes 0 new rows
+-- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 3: Rerun adds no new rows)
+-- All landing rows have been stamped with PROCESSED_AT, so a rerun processes 0 new rows
 -- and does not duplicate staging, DLQ, or mart records.
 !source sql/snowflake/run_all.sql
 
@@ -305,6 +326,39 @@ WITH AssertionResults AS (
         'Rerun delta: MEMBER_LOYALTY_360 row count unchanged' AS scenario,
         '0' AS expected,
         TO_VARCHAR((SELECT COUNT(*) FROM MEMBER_LOYALTY_360) - (SELECT MART_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+
+    UNION ALL
+
+    -- Scenario 11A: Two distinct rows with missing member_id both preserved in DLQ
+    SELECT
+        19 AS test_id,
+        'DLQ reject preservation: two rows with missing member_id both quarantined' AS scenario,
+        '2' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE ERROR_REASON = 'Missing mandatory Member_Id'
+
+    UNION ALL
+
+    -- Scenario 11B: Same ID in two source systems both bad both preserved in DLQ
+    SELECT
+        20 AS test_id,
+        'DLQ reject preservation: same ID in two source systems both bad both quarantined' AS scenario,
+        '2' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'BAD_DUP_1'
+
+    UNION ALL
+
+    -- Scenario 11C: Same bad row in two batches yields 2 DLQ rows
+    SELECT
+        21 AS test_id,
+        'DLQ reject preservation: same bad row in two batches yields 2 DLQ rows' AS scenario,
+        '2' AS expected,
+        TO_VARCHAR(COUNT(*)) AS actual
+    FROM RAW_DLQ_QUARANTINE
+    WHERE RECORD_ID = 'REPEAT_BAD_1'
 )
 SELECT
     scenario,
