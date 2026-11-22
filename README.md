@@ -2,7 +2,7 @@
 
 [![Test Suite](https://img.shields.io/badge/pytest-66%20passed-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)]()
-[![Snowflake SQL](https://img.shields.io/badge/Snowflake-SQL%20Contracts%20Verified-blue.svg)]()
+[![Snowflake Smoke Tests](https://img.shields.io/badge/Snowflake%20Smoke%20Tests-34%2F34%20Passed-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/architecture-Modular%20Layered-purple.svg)]()
 
 > **Incubyte Data Craftsperson Assessment Solution**  
@@ -16,7 +16,7 @@
 # 1. Install dependencies in editable mode
 make install
 
-# 2. Run test suite (63 unit, integration, and SQL contract tests)
+# 2. Run test suite (66 unit, integration, and SQL contract tests)
 make test
 
 # 3. Run live pipeline demonstration
@@ -55,7 +55,8 @@ skypoints-pipeline/
 │   ├── run_all.sql               # Sourced orchestration script for SnowSQL
 │   └── tests/smoke_test.sql      # Comprehensive Snowflake smoke test suite
 ├── scripts/
-│   └── generate_country_merges.py # Deterministic SQL merge code generator
+│   ├── generate_country_merges.py # Deterministic SQL merge code generator
+│   └── run_snowflake_smoke_test.py # Live Snowflake smoke test automated runner
 ├── src/skypoints/
 │   ├── models.py                 # Strongly typed dataclasses
 │   ├── pipeline.py               # End-to-end orchestrator

@@ -38,6 +38,6 @@ Any record with an empty, null, or unmapped country code (e.g., `GBR`, `DEU`, `U
 
 ## 2. Known Limitations & Operational Boundaries
 
-1. **Snowflake Execution Boundary**: The Python / DuckDB implementation is comprehensively verified by automated test suites. The Snowflake implementation (`sql/snowflake/`) contains production-ready DDL and SQL scripts configured for live SnowSQL execution; Snowflake warehouse execution is verified via `smoke_test.sql` directly by the warehouse administrator.
+1. **Snowflake Execution Verification**: The Python / DuckDB implementation is comprehensively verified by automated test suites (66/66 passing). The Snowflake implementation (`sql/snowflake/`) contains production-ready DDL and SQL scripts verified live against an active Snowflake warehouse (`COMPUTE_WH`) with 34/34 passing smoke test scenarios via `scripts/run_snowflake_smoke_test.py`.
 2. **Date Timezone Standardization**: All timestamps (`INGESTED_AT`, `PROCESSED_AT`, `LAST_UPDATED_AT`) are stored in `TIMESTAMP_NTZ` / UTC. Daylight saving time adjustments are assumed to be handled upstream by feed providers.
 3. **Out-of-Order Feed Ingestion**: In rare scenarios where older feeds are re-delivered after newer feeds have already updated core tables, the pipeline's MERGE conditions (`src.EXTRACT_DATE > target.EXTRACT_DATE`) safely prevent regressions while auditing older records to DLQ.

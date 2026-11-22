@@ -66,7 +66,7 @@ flowchart TD
 
 ### Layer 3: Staging & Country Split
 - Clean records are staged into `STG_MEMBER_PROFILE` where derived fields (`age`, `stale_member`) are computed.
-- Members are routed to country-specific core tables (`TABLE_INDIA`, `TABLE_USA`, `TABLE_CAN`, `TABLE_PHIL`, `TABLE_AU`) based on canonical country mappings.
+- Members are routed to country-specific core tables (`TABLE_INDIA`, `TABLE_USA`, `TABLE_AU`) based on canonical country mappings.
 - **Country Migration Mechanics**: When a member relocates from one country to another with a newer `EXTRACT_DATE`, an incremental MERGE inserts the record into the new country table and removes them from the previous country table, preventing duplicate identities across regions.
 
 ### Layer 4: Redemptions & Ambiguity Resolution
