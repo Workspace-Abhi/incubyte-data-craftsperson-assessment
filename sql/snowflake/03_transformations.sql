@@ -14,7 +14,7 @@
 -- ----------------------------------------------------------------------------
 -- STEP 0: Initialize Session Batch ID for Idempotent Execution
 -- ----------------------------------------------------------------------------
-SET run_batch_id = UUID_STRING();
+SET run_batch_id = (SELECT UUID_STRING());
 
 -- STG_MEMBER_PROFILE is per-batch; truncate before loading the incoming batch
 TRUNCATE TABLE STG_MEMBER_PROFILE;
@@ -77,8 +77,8 @@ WITH SanitizedLanding AS (
 )
 SELECT
     COALESCE(s.MEMBER_ID, 'UNKNOWN_ID') AS RECORD_ID,
-    CONCAT_WS('|', s.RECORD_TYPE, s.SOURCE_SYSTEM, s.MEMBER_NAME, s.MEMBER_ID, s.ENROLLMENT_DATE, s.LAST_FLIGHT_DATE, s.TIER_CODE, s.AGENT_NAME, s.STATE, s.COUNTRY, s.DOB, s.IS_ACTIVE) AS RAW_RECORD,
-    SHA2(CONCAT_WS('|', s.RECORD_TYPE, s.SOURCE_SYSTEM, s.MEMBER_NAME, s.MEMBER_ID, s.ENROLLMENT_DATE, s.LAST_FLIGHT_DATE, s.TIER_CODE, s.AGENT_NAME, s.STATE, s.COUNTRY, s.DOB, s.IS_ACTIVE), 256) AS RAW_RECORD_HASH,
+    CONCAT_WS('|', COALESCE(s.RECORD_TYPE, '<NULL>'), COALESCE(s.SOURCE_SYSTEM, '<NULL>'), COALESCE(s.MEMBER_NAME, '<NULL>'), COALESCE(s.MEMBER_ID, '<NULL>'), COALESCE(s.ENROLLMENT_DATE, '<NULL>'), COALESCE(s.LAST_FLIGHT_DATE, '<NULL>'), COALESCE(s.TIER_CODE, '<NULL>'), COALESCE(s.AGENT_NAME, '<NULL>'), COALESCE(s.STATE, '<NULL>'), COALESCE(s.COUNTRY, '<NULL>'), COALESCE(s.DOB, '<NULL>'), COALESCE(s.IS_ACTIVE, '<NULL>')) AS RAW_RECORD,
+    SHA2(CONCAT_WS('|', COALESCE(s.RECORD_TYPE, '<NULL>'), COALESCE(s.SOURCE_SYSTEM, '<NULL>'), COALESCE(s.MEMBER_NAME, '<NULL>'), COALESCE(s.MEMBER_ID, '<NULL>'), COALESCE(s.ENROLLMENT_DATE, '<NULL>'), COALESCE(s.LAST_FLIGHT_DATE, '<NULL>'), COALESCE(s.TIER_CODE, '<NULL>'), COALESCE(s.AGENT_NAME, '<NULL>'), COALESCE(s.STATE, '<NULL>'), COALESCE(s.COUNTRY, '<NULL>'), COALESCE(s.DOB, '<NULL>'), COALESCE(s.IS_ACTIVE, '<NULL>')), 256) AS RAW_RECORD_HASH,
     CASE
         WHEN s.MEMBER_ID IS NULL THEN 'Missing mandatory Member_Id'
         WHEN s.MEMBER_NAME IS NULL THEN 'Missing mandatory Member_Name'
@@ -88,8 +88,8 @@ SELECT
         WHEN s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL THEN 'Invalid DOB: unparseable calendar date'
         WHEN LENGTH(s.MEMBER_ID) > 18 THEN 'Member_Id exceeds 18 characters'
         WHEN s.COUNTRY IS NULL THEN 'Unmapped country: Country is required and cannot be empty'
-        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN m.CANONICAL_CODE IS NULL THEN 'Unmapped country'
+        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5 THEN 'State exceeds 5 characters'
         WHEN s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5) THEN 'Invalid Post_Code: must be numeric up to 5 digits'
         WHEN s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV') THEN 'Invalid domain value: Tier_Code not in (PLT, GLD, SLV)'
@@ -123,7 +123,7 @@ WHERE s.RECORD_TYPE = 'D'
   AND NOT EXISTS (
       SELECT 1 FROM RAW_DLQ_QUARANTINE q
       WHERE q.BATCH_ID = $run_batch_id
-        AND q.RAW_RECORD_HASH = SHA2(CONCAT_WS('|', s.RECORD_TYPE, s.SOURCE_SYSTEM, s.MEMBER_NAME, s.MEMBER_ID, s.ENROLLMENT_DATE, s.LAST_FLIGHT_DATE, s.TIER_CODE, s.AGENT_NAME, s.STATE, s.COUNTRY, s.DOB, s.IS_ACTIVE), 256)
+        AND q.RAW_RECORD_HASH = SHA2(CONCAT_WS('|', COALESCE(s.RECORD_TYPE, '<NULL>'), COALESCE(s.SOURCE_SYSTEM, '<NULL>'), COALESCE(s.MEMBER_NAME, '<NULL>'), COALESCE(s.MEMBER_ID, '<NULL>'), COALESCE(s.ENROLLMENT_DATE, '<NULL>'), COALESCE(s.LAST_FLIGHT_DATE, '<NULL>'), COALESCE(s.TIER_CODE, '<NULL>'), COALESCE(s.AGENT_NAME, '<NULL>'), COALESCE(s.STATE, '<NULL>'), COALESCE(s.COUNTRY, '<NULL>'), COALESCE(s.DOB, '<NULL>'), COALESCE(s.IS_ACTIVE, '<NULL>')), 256)
   );
 
 
@@ -171,7 +171,7 @@ WITH SanitizedLanding AS (
         SOURCE_FILE_NAME,
         COALESCE(
             EXTRACT_TS,
-            TRY_TO_TIMESTAMP_NTZ(REGEXP_SUBSTR(SOURCE_FILE_NAME, '[0-9]{8}[_ -]?[0-9]{6}'), 'YYYYMMDD_HH24MISS'),
+            TRY_TO_TIMESTAMP_NTZ(REGEXP_REPLACE(REGEXP_SUBSTR(SOURCE_FILE_NAME, '[0-9]{8}[_ -]?[0-9]{6}'), '[^0-9]', ''), 'YYYYMMDDHH24MISS'),
             TRY_TO_TIMESTAMP_NTZ(REGEXP_SUBSTR(SOURCE_FILE_NAME, '[0-9]{8}'), 'YYYYMMDD'),
             INGESTED_AT,
             CURRENT_TIMESTAMP()
@@ -492,6 +492,7 @@ USING (
       AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) >= 0
       AND r.value:partner IS NOT NULL AND NULLIF(TRIM(r.value:partner::STRING), '') IS NOT NULL
       AND r.value:status IS NOT NULL AND NULLIF(TRIM(r.value:status::STRING), '') IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY r.value:txn_id::STRING ORDER BY raw.INGESTED_AT DESC) = 1
 ) src
 ON target.TXN_ID = src.TXN_ID
 WHEN MATCHED THEN

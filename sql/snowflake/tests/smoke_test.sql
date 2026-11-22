@@ -21,6 +21,8 @@
 -- ============================================================================
 
 -- Step 1: Create isolated temporary schema and set as current
+CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;
+USE DATABASE SKYPOINTS_DB;
 CREATE OR REPLACE TRANSIENT SCHEMA SKYPOINTS_SMOKE_TEST;
 USE SCHEMA SKYPOINTS_SMOKE_TEST;
 
@@ -35,7 +37,7 @@ INSERT INTO TABLE_USA (
     TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS
 ) VALUES (
     'FLAT_FILE', 'MOVE_101', 'David Miller', DATE '2020-01-01', DATE '2023-08-01',
-    'GLD', 'AgentA', 'CA', 'USA', 90210, DATE '1985-05-03', 'A', 38, 'Y', TIMESTAMP_NTZ '2023-01-01 00:00:00'
+    'GLD', 'AgentA', 'CA', 'USA', 90210, DATE '1985-05-03', 'A', 38, 'Y', '2023-01-01 00:00:00'::TIMESTAMP_NTZ
 );
 
 -- Interrupted batch fixture: simulates an interrupted run that claimed rows with an old BATCH_ID but failed before PROCESSED_AT was stamped
@@ -189,6 +191,14 @@ SELECT
 
 -- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 3: Empty idempotent rerun)
 !source sql/snowflake/run_all.sql
+
+-- Capture snapshot of counts right after empty rerun to verify zero delta
+CREATE OR REPLACE TEMPORARY TABLE POST_RERUN_SNAPSHOT AS
+SELECT
+    (SELECT COUNT(*) FROM STG_MEMBER_PROFILE) AS STG_MEMBER_COUNT,
+    (SELECT COUNT(*) FROM RAW_DLQ_QUARANTINE) AS DLQ_COUNT,
+    (SELECT COUNT(*) FROM STG_REDEMPTIONS_FLATTENED) AS STG_REDEMP_COUNT,
+    (SELECT COUNT(*) FROM MEMBER_LOYALTY_360) AS MART_COUNT;
 
 -- Step 5C: Simulate in-flight arrival landing after batch finalization (BATCH_ID IS NULL)
 INSERT INTO RAW_MEMBER_LANDING (
@@ -364,7 +374,7 @@ WITH AssertionResults AS (
         15 AS test_id,
         'Rerun delta: STG_MEMBER_PROFILE row count unchanged' AS scenario,
         '0' AS expected,
-        TO_VARCHAR((SELECT COUNT(*) FROM STG_MEMBER_PROFILE) - (SELECT STG_MEMBER_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+        TO_VARCHAR((SELECT STG_MEMBER_COUNT FROM POST_RERUN_SNAPSHOT) - (SELECT STG_MEMBER_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 
@@ -373,7 +383,7 @@ WITH AssertionResults AS (
         16 AS test_id,
         'Rerun delta: RAW_DLQ_QUARANTINE row count unchanged' AS scenario,
         '0' AS expected,
-        TO_VARCHAR((SELECT COUNT(*) FROM RAW_DLQ_QUARANTINE) - (SELECT DLQ_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+        TO_VARCHAR((SELECT DLQ_COUNT FROM POST_RERUN_SNAPSHOT) - (SELECT DLQ_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 
@@ -382,7 +392,7 @@ WITH AssertionResults AS (
         17 AS test_id,
         'Rerun delta: STG_REDEMPTIONS_FLATTENED row count unchanged' AS scenario,
         '0' AS expected,
-        TO_VARCHAR((SELECT COUNT(*) FROM STG_REDEMPTIONS_FLATTENED) - (SELECT STG_REDEMP_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+        TO_VARCHAR((SELECT STG_REDEMP_COUNT FROM POST_RERUN_SNAPSHOT) - (SELECT STG_REDEMP_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 
@@ -391,7 +401,7 @@ WITH AssertionResults AS (
         18 AS test_id,
         'Rerun delta: MEMBER_LOYALTY_360 row count unchanged' AS scenario,
         '0' AS expected,
-        TO_VARCHAR((SELECT COUNT(*) FROM MEMBER_LOYALTY_360) - (SELECT MART_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+        TO_VARCHAR((SELECT MART_COUNT FROM POST_RERUN_SNAPSHOT) - (SELECT MART_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 
