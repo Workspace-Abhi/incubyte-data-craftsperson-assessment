@@ -57,6 +57,14 @@ WHEN NOT MATCHED THEN
     INSERT (RECORD_ID, RAW_RECORD, RAW_RECORD_HASH, ERROR_REASON, SOURCE_FEED, SOURCE_SYSTEM, SOURCE_FILE_NAME, BATCH_ID, QUARANTINED_AT)
     VALUES (src.RECORD_ID, src.RAW_RECORD, src.RAW_RECORD_HASH, src.ERROR_REASON, src.SOURCE_FEED, src.SOURCE_SYSTEM, src.SOURCE_FILE_NAME, src.BATCH_ID, CURRENT_TIMESTAMP());
 
+-- Remove resolved redemptions from DLQ when ambiguity disappears
+DELETE FROM RAW_DLQ_QUARANTINE
+WHERE SOURCE_FEED = 'STG_REDEMPTIONS_FLATTENED'
+  AND ERROR_REASON = 'Ambiguous member_id across source systems'
+  AND RECORD_ID IN (
+      SELECT red.TXN_ID FROM STG_REDEMPTIONS_FLATTENED red WHERE red.IS_AMBIGUOUS = FALSE
+  );
+
 -- 2. Build or Refresh MEMBER_LOYALTY_360 Mart (Idempotent MERGE for affected members)
 -- Keyed on (SOURCE_SYSTEM, MEMBER_ID) from MEMBERS_ALL_CURRENT; touches only members affected by this batch,
 -- including members whose redemptions were previously ambiguous and are now resolved.
@@ -164,6 +172,12 @@ WHEN NOT MATCHED THEN
         src.TOTAL_REDEMPTIONS, src.TOTAL_MILES_REDEEMED, src.PENDING_MILES_REDEEMED,
         src.LAST_REDEMPTION_DATE, src.TOP_PARTNER, CURRENT_TIMESTAMP()
     );
+
+-- Remove members from mart that no longer exist in unified current members view (e.g. cross-country moves or hard deletes)
+DELETE FROM MEMBER_LOYALTY_360
+WHERE (SOURCE_SYSTEM, MEMBER_ID) NOT IN (
+    SELECT SOURCE_SYSTEM, MEMBER_ID FROM MEMBERS_ALL_CURRENT
+);
 
 
 -- ----------------------------------------------------------------------------

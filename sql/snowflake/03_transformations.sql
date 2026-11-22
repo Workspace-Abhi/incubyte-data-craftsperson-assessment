@@ -14,7 +14,7 @@
 -- ----------------------------------------------------------------------------
 -- STEP 0: Initialize Session Batch ID for Idempotent Execution
 -- ----------------------------------------------------------------------------
-SET run_batch_id = UUID_STRING();
+SET run_batch_id = (SELECT UUID_STRING());
 
 -- STG_MEMBER_PROFILE is per-batch; truncate before loading the incoming batch
 TRUNCATE TABLE STG_MEMBER_PROFILE;
@@ -88,8 +88,8 @@ SELECT
         WHEN s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL THEN 'Invalid DOB: unparseable calendar date'
         WHEN LENGTH(s.MEMBER_ID) > 18 THEN 'Member_Id exceeds 18 characters'
         WHEN s.COUNTRY IS NULL THEN 'Unmapped country: Country is required and cannot be empty'
-        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN m.CANONICAL_CODE IS NULL THEN 'Unmapped country'
+        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5 THEN 'State exceeds 5 characters'
         WHEN s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5) THEN 'Invalid Post_Code: must be numeric up to 5 digits'
         WHEN s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV') THEN 'Invalid domain value: Tier_Code not in (PLT, GLD, SLV)'
@@ -492,6 +492,7 @@ USING (
       AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) >= 0
       AND r.value:partner IS NOT NULL AND NULLIF(TRIM(r.value:partner::STRING), '') IS NOT NULL
       AND r.value:status IS NOT NULL AND NULLIF(TRIM(r.value:status::STRING), '') IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY r.value:txn_id::STRING ORDER BY raw.INGESTED_AT DESC) = 1
 ) src
 ON target.TXN_ID = src.TXN_ID
 WHEN MATCHED THEN

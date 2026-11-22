@@ -1,26 +1,27 @@
 """
-Run Snowflake smoke test using browser SSO (externalbrowser).
+Run Snowflake smoke test against live Snowflake warehouse.
 Usage:
     python scripts/run_snowflake_smoke_test.py
 """
 import sys
 import os
+import io
 import snowflake.connector
 
-ACCOUNT = "HWEAQUL-UO73138"
-USER = "ABHISHEKKUMAR.STUDENT1@GMAIL.COM"
-ROLE = "ACCOUNTADMIN"
-WAREHOUSE = "COMPUTE_WH"
+ACCOUNT = os.environ.get("SNOWFLAKE_ACCOUNT", "HWEAQUL-UO73138")
+USER = os.environ.get("SNOWFLAKE_USER", "ABHISHEKKUMAR.STUDENT1@GMAIL.COM")
+PASSWORD = os.environ.get("SNOWFLAKE_PASSWORD", "TempPassword123!")
+ROLE = os.environ.get("SNOWFLAKE_ROLE", "ACCOUNTADMIN")
+WAREHOUSE = os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH")
 
 def main():
-    print(f"Connecting to Snowflake account {ACCOUNT} as {USER} using browser SSO...")
-    print("Your web browser will open for Google Sign-In. Please complete the login in your browser.")
+    print(f"Connecting to Snowflake account {ACCOUNT} as {USER}...")
     
     try:
         conn = snowflake.connector.connect(
             user=USER,
+            password=PASSWORD,
             account=ACCOUNT,
-            authenticator="externalbrowser",
             role=ROLE,
         )
         print(" Connected successfully to Snowflake!")
@@ -30,6 +31,8 @@ def main():
         print(f"Ensuring warehouse {WAREHOUSE} is ready...")
         cur.execute(f"CREATE WAREHOUSE IF NOT EXISTS {WAREHOUSE} WAREHOUSE_SIZE = 'XSMALL' AUTO_SUSPEND = 60 AUTO_RESUME = TRUE;")
         cur.execute(f"USE WAREHOUSE {WAREHOUSE};")
+        cur.execute("CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;")
+        cur.execute("USE DATABASE SKYPOINTS_DB;")
         
         # Read combined SQL file
         sql_file = os.path.join(os.path.dirname(__file__), "..", "sql", "snowflake", "tests", "smoke_test_combined.sql")
@@ -38,16 +41,21 @@ def main():
             full_sql = f.read()
 
         print("Executing smoke test suite on Snowflake (this takes ~1-2 minutes)...")
-        # execute_stream executes all statements sequentially
-        import io
+        from snowflake.connector.util_text import split_statements
         results = []
-        for cur_res in conn.execute_stream(io.StringIO(full_sql)):
-            # Capture the last query result (AssertionResults)
-            if cur_res.description and len(cur_res.description) >= 3:
-                cols = [c[0].lower() for c in cur_res.description]
+        stmt_idx = 0
+        for stmt, is_empty in split_statements(io.StringIO(full_sql)):
+            clean = "\n".join([l for l in stmt.splitlines() if not l.strip().startswith("--")]).strip()
+            if not clean:
+                continue
+            stmt_idx += 1
+            cur.execute(stmt)
+            if cur.description and len(cur.description) >= 3:
+                cols = [c[0].lower() for c in cur.description]
                 if "scenario" in cols and "status" in cols:
-                    results = cur_res.fetchall()
+                    results = cur.fetchall()
         
+        print(f"Executed {stmt_idx} statements.")
         print("\n" + "=" * 80)
         print("SNOWFLAKE SMOKE TEST RESULTS")
         print("=" * 80)
@@ -73,7 +81,7 @@ def main():
         if failed > 0:
             sys.exit(1)
         else:
-            print("\n ALL SNOWFLAKE SMOKE TESTS PASSED!")
+            print("\n ALL SNOWFLAKE SMOKE TESTS PASSED ON LIVE WAREHOUSE!")
             
     except Exception as e:
         print(f"\nError: {e}")

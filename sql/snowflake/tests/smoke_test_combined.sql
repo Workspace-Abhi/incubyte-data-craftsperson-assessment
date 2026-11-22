@@ -23,17 +23,19 @@
 -- Step 1: Create isolated temporary schema and set as current
 CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;
 USE DATABASE SKYPOINTS_DB;
-CREATE OR REPLACE TRANSIENT SCHEMA SKYPOINTS_DB.SKYPOINTS_SMOKE_TEST;
-USE SCHEMA SKYPOINTS_DB.SKYPOINTS_SMOKE_TEST;
+CREATE OR REPLACE TRANSIENT SCHEMA SKYPOINTS_SMOKE_TEST;
+USE SCHEMA SKYPOINTS_SMOKE_TEST;
 
 -- Step 2: Execute production DDL
--- DDL CREATION (01_ddl.sql inlined)
 -- ============================================================================
 -- SkyPoints Airline Loyalty Program - Snowflake DDL Architecture
 -- Scalable for billions of daily records across flat files and JSON feeds
 -- ============================================================================
 
 -- Database and Schema Setup
+CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;
+CREATE SCHEMA IF NOT EXISTS SKYPOINTS_DB.CORE;
+USE SCHEMA SKYPOINTS_DB.CORE;
 
 -- ----------------------------------------------------------------------------
 -- 1. RAW LANDING TABLE: Member Profile Flat File
@@ -46,7 +48,7 @@ CREATE TABLE IF NOT EXISTS RAW_MEMBER_LANDING (
     MEMBER_ID            VARCHAR(50),
     ENROLLMENT_DATE      VARCHAR(50),
     LAST_FLIGHT_DATE     VARCHAR(50),
-    TIER_CODE            VARCHAR(10),
+    TIER_CODE            VARCHAR(50),
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50),
@@ -86,7 +88,7 @@ CREATE TABLE IF NOT EXISTS STG_MEMBER_PROFILE (
     MEMBER_NAME          VARCHAR(255)     NOT NULL,
     ENROLLMENT_DATE      DATE             NOT NULL,
     LAST_FLIGHT_DATE     DATE,
-    TIER_CODE            VARCHAR(10),
+    TIER_CODE            VARCHAR(50),
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50),
@@ -119,7 +121,7 @@ CREATE TABLE IF NOT EXISTS TABLE_INDIA (
     MEMBER_NAME          VARCHAR(255)     NOT NULL,
     ENROLLMENT_DATE      DATE             NOT NULL,
     LAST_FLIGHT_DATE     DATE,
-    TIER_CODE            VARCHAR(10),
+    TIER_CODE            VARCHAR(50),
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'IND',
@@ -143,7 +145,7 @@ CREATE TABLE IF NOT EXISTS TABLE_USA (
     MEMBER_NAME          VARCHAR(255)     NOT NULL,
     ENROLLMENT_DATE      DATE             NOT NULL,
     LAST_FLIGHT_DATE     DATE,
-    TIER_CODE            VARCHAR(10),
+    TIER_CODE            VARCHAR(50),
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'USA',
@@ -167,7 +169,7 @@ CREATE TABLE IF NOT EXISTS TABLE_AU (
     MEMBER_NAME          VARCHAR(255)     NOT NULL,
     ENROLLMENT_DATE      DATE             NOT NULL,
     LAST_FLIGHT_DATE     DATE,
-    TIER_CODE            VARCHAR(10),
+    TIER_CODE            VARCHAR(50),
     AGENT_NAME           VARCHAR(255),
     STATE                VARCHAR(50),
     COUNTRY              VARCHAR(50)      DEFAULT 'AU',
@@ -218,7 +220,7 @@ CREATE TABLE IF NOT EXISTS MEMBER_LOYALTY_360 (
     MEMBER_ID            VARCHAR(50)      NOT NULL,
     MEMBER_NAME          VARCHAR(255),
     COUNTRY              VARCHAR(50),
-    TIER_CODE            VARCHAR(10),
+    TIER_CODE            VARCHAR(50),
     ENROLLMENT_DATE      DATE,
     LAST_FLIGHT_DATE     DATE,
     AGE                  INTEGER,
@@ -242,6 +244,7 @@ ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
 ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
 ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
 ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
+ALTER TABLE RAW_MEMBER_LANDING MODIFY COLUMN TIER_CODE VARCHAR(50);
 
 ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
 ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
@@ -381,6 +384,7 @@ FROM MEMBERS_ALL_CURRENT m
 LEFT JOIN MEMBER_LOYALTY_360 l
     ON m.SOURCE_SYSTEM = l.SOURCE_SYSTEM AND m.MEMBER_ID = l.MEMBER_ID;
 
+
 -- Step 3: Seed initial historical state & load fixtures into landing
 -- Pre-existing historical member in TABLE_USA who moves to India in today's batch.
 -- Seeded with higher flight date (2023-08-01) but older extract date (2023-01-01).
@@ -504,14 +508,368 @@ SELECT PARSE_JSON('{
 }'), '20240115';
 
 -- Step 4: Run production pipeline via run_all.sql (Run 1: Processes Initial Batches)
--- ==========================================
--- PIPELINE RUN #1
--- ==========================================
+-- ==================== INLINED 01_DDL.SQL ====================
+
+-- ============================================================================
+-- SkyPoints Airline Loyalty Program - Snowflake DDL Architecture
+-- Scalable for billions of daily records across flat files and JSON feeds
+-- ============================================================================
+
+-- Database and Schema Setup
+CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;
+CREATE SCHEMA IF NOT EXISTS SKYPOINTS_DB.CORE;
+USE SCHEMA SKYPOINTS_DB.CORE;
 
 -- ----------------------------------------------------------------------------
--- PIPELINE EXECUTION (run_all.sql inlined)
+-- 1. RAW LANDING TABLE: Member Profile Flat File
+-- Ingests raw pipe-delimited data as VARCHAR to guarantee zero load dropouts
 -- ----------------------------------------------------------------------------
--- 1. Transformations & Staging
+CREATE TABLE IF NOT EXISTS RAW_MEMBER_LANDING (
+    RECORD_TYPE          VARCHAR(10),     -- 'H' for Header, 'D' for Detail
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_NAME          VARCHAR(255),
+    MEMBER_ID            VARCHAR(50),
+    ENROLLMENT_DATE      VARCHAR(50),
+    LAST_FLIGHT_DATE     VARCHAR(50),
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50),
+    DOB                  VARCHAR(50),
+    IS_ACTIVE            VARCHAR(10),
+    POST_CODE            VARCHAR(50),
+    SOURCE_FILE_NAME     VARCHAR(255),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    LINE_NO              NUMBER,
+    BATCH_ID             VARCHAR(50),
+    PROCESSED_AT         TIMESTAMP_NTZ,
+    INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Dead Letter Queue (DLQ) table for quarantined malformed rows
+CREATE TABLE IF NOT EXISTS RAW_DLQ_QUARANTINE (
+    RECORD_ID            VARCHAR(50),
+    RAW_RECORD           VARCHAR,
+    RAW_RECORD_HASH      VARCHAR(64),
+    ERROR_REASON         VARCHAR(500),
+    SOURCE_FEED          VARCHAR(255),
+    SOURCE_SYSTEM        VARCHAR(30),
+    SOURCE_FILE_NAME     VARCHAR(255),
+    BATCH_ID             VARCHAR(50),
+    QUARANTINED_AT       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- ----------------------------------------------------------------------------
+-- 2. STAGING TABLE: Member Profile with Derived Columns
+-- Strongly-typed, normalized dates, plus Age & Stale_Member (> 90 days)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS STG_MEMBER_PROFILE (
+    STG_ROW_ID          VARCHAR          DEFAULT UUID_STRING(),
+    BATCH_ID             VARCHAR(50),
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50),
+    POST_CODE            NUMBER(5, 0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1)       DEFAULT 'A',
+    AGE                  INTEGER,         -- Derived: Exact calendar age
+    STALE_MEMBER         VARCHAR(1),      -- Derived: 'Y' if days since Flight_Date > 90 else 'N'
+    SOURCE_FILE_NAME     VARCHAR(255),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    LINE_NO              NUMBER,
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+    -- NOTE: Primary key constraints are removed from STG_MEMBER_PROFILE because staging
+    -- legitimately holds multiple records per key during ingestion prior to deduplication.
+    -- Snowflake does not enforce PRIMARY KEY constraints on country tables or marts.
+)
+CLUSTER BY (COUNTRY, ENROLLMENT_DATE);
+
+-- ----------------------------------------------------------------------------
+-- 3. COUNTRY-SPECIFIC TARGET TABLES
+-- Dedicated physical country tables clustered on MEMBER_ID
+-- NOTE: Primary key declarations are informational metadata; Snowflake does not
+-- enforce primary key uniqueness. Pipeline deduplication and MERGE logic enforce uniqueness.
+-- ----------------------------------------------------------------------------
+
+-- Table: India
+CREATE TABLE IF NOT EXISTS TABLE_INDIA (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'IND',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- Table: USA
+CREATE TABLE IF NOT EXISTS TABLE_USA (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'USA',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- Table: Australia
+CREATE TABLE IF NOT EXISTS TABLE_AU (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'AU',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- ----------------------------------------------------------------------------
+-- 4. SEMI-STRUCTURED REDEMPTION TABLES & MART TABLES
+-- ----------------------------------------------------------------------------
+
+-- Landing table for raw JSON documents
+CREATE TABLE IF NOT EXISTS RAW_REDEMPTIONS_LANDING (
+    FEED_PAYLOAD         VARIANT,
+    FEED_DATE            VARCHAR(50),
+    BATCH_ID             VARCHAR(50),
+    PROCESSED_AT         TIMESTAMP_NTZ,
+    INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Flattened relational redemptions table
+CREATE TABLE IF NOT EXISTS STG_REDEMPTIONS_FLATTENED (
+    TXN_ID               VARCHAR(50)      PRIMARY KEY,
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    FEED_DATE            DATE             NOT NULL,
+    TXN_DATE             DATE             NOT NULL,
+    PARTNER              VARCHAR(100)     NOT NULL,
+    MILES_REDEEMED       INTEGER          NOT NULL,
+    STATUS               VARCHAR(50)      NOT NULL,
+    IS_AMBIGUOUS         BOOLEAN          DEFAULT FALSE,
+    BATCH_ID             VARCHAR(50),
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+)
+CLUSTER BY (MEMBER_ID, TXN_DATE);
+
+-- Analytical mart table
+CREATE TABLE IF NOT EXISTS MEMBER_LOYALTY_360 (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255),
+    COUNTRY              VARCHAR(50),
+    TIER_CODE            VARCHAR(50),
+    ENROLLMENT_DATE      DATE,
+    LAST_FLIGHT_DATE     DATE,
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    TOTAL_REDEMPTIONS    INTEGER          DEFAULT 0,
+    TOTAL_MILES_REDEEMED INTEGER          DEFAULT 0,
+    PENDING_MILES_REDEEMED INTEGER        DEFAULT 0,
+    LAST_REDEMPTION_DATE DATE,
+    TOP_PARTNER          VARCHAR(100),
+    LAST_SYNC_AT         TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+);
+
+-- ----------------------------------------------------------------------------
+-- 5. SCHEMA EVOLUTION & MIGRATION STATEMENTS (FOR PRE-EXISTING SCHEMAS)
+-- Safe, idempotent column additions executed BEFORE views are created/updated
+-- so existing tables have all required columns before view compilation.
+-- ----------------------------------------------------------------------------
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
+ALTER TABLE RAW_MEMBER_LANDING MODIFY COLUMN TIER_CODE VARCHAR(50);
+
+ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
+
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS RAW_RECORD_HASH VARCHAR(64);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS SOURCE_SYSTEM VARCHAR(30);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS STG_ROW_ID VARCHAR;
+
+ALTER TABLE STG_REDEMPTIONS_FLATTENED ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+-- ----------------------------------------------------------------------------
+-- 6. REFERENCE TABLES: Country Table Mapping
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS REF_COUNTRY_MAP (
+    COUNTRY_CODE         VARCHAR(10)      PRIMARY KEY,
+    CANONICAL_CODE       VARCHAR(10)      NOT NULL,
+    TARGET_TABLE         VARCHAR(50)      NOT NULL
+);
+
+-- Seed Country Mappings (IND/INDIA -> TABLE_INDIA, USA -> TABLE_USA, AU/AUS -> TABLE_AU)
+MERGE INTO REF_COUNTRY_MAP target
+USING (
+    SELECT 'IND' AS code, 'IND' AS canonical, 'TABLE_INDIA' AS tbl UNION ALL
+    SELECT 'INDIA', 'IND', 'TABLE_INDIA' UNION ALL
+    SELECT 'USA', 'USA', 'TABLE_USA' UNION ALL
+    SELECT 'AU', 'AU', 'TABLE_AU' UNION ALL
+    SELECT 'AUS', 'AU', 'TABLE_AU'
+) src
+ON target.COUNTRY_CODE = src.code
+WHEN MATCHED THEN
+    UPDATE SET target.CANONICAL_CODE = src.canonical, target.TARGET_TABLE = src.tbl
+WHEN NOT MATCHED THEN
+    INSERT (COUNTRY_CODE, CANONICAL_CODE, TARGET_TABLE) VALUES (src.code, src.canonical, src.tbl);
+
+-- ----------------------------------------------------------------------------
+-- 7. UNIFIED COUNTRY MEMBERS VIEW
+-- Explicit column list projected across all country tables
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL AS
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_INDIA
+UNION ALL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_USA
+UNION ALL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_AU;
+
+-- ----------------------------------------------------------------------------
+-- 8. DYNAMIC UNIFIED MEMBERS VIEW (Query-Time Recalculation)
+-- Dynamically recomputes AGE and STALE_MEMBER at query time relative to CURRENT_DATE()
+-- while preserving static stored attributes in the country tables.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL_CURRENT AS
+SELECT
+    SOURCE_SYSTEM,
+    MEMBER_ID,
+    MEMBER_NAME,
+    ENROLLMENT_DATE,
+    LAST_FLIGHT_DATE,
+    TIER_CODE,
+    AGENT_NAME,
+    STATE,
+    COUNTRY,
+    POST_CODE,
+    DOB,
+    IS_ACTIVE,
+    -- Dynamically recomputed exact calendar age at query time
+    CASE
+        WHEN DOB IS NULL THEN NULL
+        ELSE DATEDIFF(year, DOB, CURRENT_DATE()) - 
+             CASE 
+                WHEN (MONTH(CURRENT_DATE()) < MONTH(DOB)) 
+                  OR (MONTH(CURRENT_DATE()) = MONTH(DOB) 
+                      AND DAY(CURRENT_DATE()) < DAY(DOB)) 
+                THEN 1 ELSE 0 
+             END
+    END AS AGE,
+    -- Dynamically recomputed stale member flag at query time (>90 days since flight)
+    CASE 
+        WHEN LAST_FLIGHT_DATE IS NULL THEN 'Y'
+        WHEN DATEDIFF(day, LAST_FLIGHT_DATE, CURRENT_DATE()) > 90 THEN 'Y'
+        ELSE 'N'
+    END AS STALE_MEMBER,
+    EXTRACT_TS,
+    SOURCE_FILE_NAME,
+    LINE_NO,
+    LAST_UPDATED_AT
+FROM MEMBERS_ALL;
+
+-- ----------------------------------------------------------------------------
+-- 9. DYNAMIC ANALYTICAL MART: Member Loyalty 360 Current View
+-- Reads stored redemption totals from MEMBER_LOYALTY_360 (the mart), which are
+-- refreshed each run by the pipeline, and recomputes only Age and Stale_Member
+-- dynamically relative to CURRENT_DATE() using MEMBERS_ALL_CURRENT.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBER_LOYALTY_360_CURRENT AS
+SELECT
+    m.SOURCE_SYSTEM,
+    m.MEMBER_ID,
+    m.MEMBER_NAME,
+    m.COUNTRY,
+    m.TIER_CODE,
+    m.ENROLLMENT_DATE,
+    m.LAST_FLIGHT_DATE,
+    m.AGE,
+    m.STALE_MEMBER,
+    COALESCE(l.TOTAL_REDEMPTIONS, 0) AS TOTAL_REDEMPTIONS,
+    COALESCE(l.TOTAL_MILES_REDEEMED, 0) AS TOTAL_MILES_REDEEMED,
+    COALESCE(l.PENDING_MILES_REDEEMED, 0) AS PENDING_MILES_REDEEMED,
+    l.LAST_REDEMPTION_DATE,
+    COALESCE(l.TOP_PARTNER, 'None') AS TOP_PARTNER,
+    CURRENT_TIMESTAMP() AS LAST_SYNC_AT
+FROM MEMBERS_ALL_CURRENT m
+LEFT JOIN MEMBER_LOYALTY_360 l
+    ON m.SOURCE_SYSTEM = l.SOURCE_SYSTEM AND m.MEMBER_ID = l.MEMBER_ID;
+
+
+-- ==================== INLINED 03_TRANSFORMATIONS.SQL ====================
+
 -- ============================================================================
 -- SkyPoints Snowflake Staging Load & Country Split Transformation Logic
 -- Implements:
@@ -528,7 +886,7 @@ SELECT PARSE_JSON('{
 -- ----------------------------------------------------------------------------
 -- STEP 0: Initialize Session Batch ID for Idempotent Execution
 -- ----------------------------------------------------------------------------
-SET run_batch_id = UUID_STRING();
+SET run_batch_id = (SELECT UUID_STRING());
 
 -- STG_MEMBER_PROFILE is per-batch; truncate before loading the incoming batch
 TRUNCATE TABLE STG_MEMBER_PROFILE;
@@ -602,8 +960,8 @@ SELECT
         WHEN s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL THEN 'Invalid DOB: unparseable calendar date'
         WHEN LENGTH(s.MEMBER_ID) > 18 THEN 'Member_Id exceeds 18 characters'
         WHEN s.COUNTRY IS NULL THEN 'Unmapped country: Country is required and cannot be empty'
-        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN m.CANONICAL_CODE IS NULL THEN 'Unmapped country'
+        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5 THEN 'State exceeds 5 characters'
         WHEN s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5) THEN 'Invalid Post_Code: must be numeric up to 5 digits'
         WHEN s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV') THEN 'Invalid domain value: Tier_Code not in (PLT, GLD, SLV)'
@@ -1006,6 +1364,7 @@ USING (
       AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) >= 0
       AND r.value:partner IS NOT NULL AND NULLIF(TRIM(r.value:partner::STRING), '') IS NOT NULL
       AND r.value:status IS NOT NULL AND NULLIF(TRIM(r.value:status::STRING), '') IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY r.value:txn_id::STRING ORDER BY raw.INGESTED_AT DESC) = 1
 ) src
 ON target.TXN_ID = src.TXN_ID
 WHEN MATCHED THEN
@@ -1024,7 +1383,8 @@ WHEN NOT MATCHED THEN
 
 
 
--- 2. Country Routing & Migration Merges
+-- ==================== INLINED 04_COUNTRY_MERGES.SQL ====================
+
 -- ============================================================================
 -- Static Country MERGE & Migration DELETE Statements for Snowflake
 -- Generated automatically by scripts/generate_country_merges.py
@@ -1402,7 +1762,8 @@ WHERE EXISTS (
 
 
 
--- 3. Mart Aggregation & Batch Finalization
+-- ==================== INLINED 05_MART_AND_FINALIZE.SQL ====================
+
 -- ============================================================================
 -- SkyPoints Step 3: Analytical Mart Build & Finalize Landing Batch Tracking
 -- NOTE: run_batch_id is a session variable initialized in transformations.sql.
@@ -1461,6 +1822,14 @@ AND target.RAW_RECORD_HASH = src.RAW_RECORD_HASH
 WHEN NOT MATCHED THEN
     INSERT (RECORD_ID, RAW_RECORD, RAW_RECORD_HASH, ERROR_REASON, SOURCE_FEED, SOURCE_SYSTEM, SOURCE_FILE_NAME, BATCH_ID, QUARANTINED_AT)
     VALUES (src.RECORD_ID, src.RAW_RECORD, src.RAW_RECORD_HASH, src.ERROR_REASON, src.SOURCE_FEED, src.SOURCE_SYSTEM, src.SOURCE_FILE_NAME, src.BATCH_ID, CURRENT_TIMESTAMP());
+
+-- Remove resolved redemptions from DLQ when ambiguity disappears
+DELETE FROM RAW_DLQ_QUARANTINE
+WHERE SOURCE_FEED = 'STG_REDEMPTIONS_FLATTENED'
+  AND ERROR_REASON = 'Ambiguous member_id across source systems'
+  AND RECORD_ID IN (
+      SELECT red.TXN_ID FROM STG_REDEMPTIONS_FLATTENED red WHERE red.IS_AMBIGUOUS = FALSE
+  );
 
 -- 2. Build or Refresh MEMBER_LOYALTY_360 Mart (Idempotent MERGE for affected members)
 -- Keyed on (SOURCE_SYSTEM, MEMBER_ID) from MEMBERS_ALL_CURRENT; touches only members affected by this batch,
@@ -1570,6 +1939,12 @@ WHEN NOT MATCHED THEN
         src.LAST_REDEMPTION_DATE, src.TOP_PARTNER, CURRENT_TIMESTAMP()
     );
 
+-- Remove members from mart that no longer exist in unified current members view (e.g. cross-country moves or hard deletes)
+DELETE FROM MEMBER_LOYALTY_360
+WHERE (SOURCE_SYSTEM, MEMBER_ID) NOT IN (
+    SELECT SOURCE_SYSTEM, MEMBER_ID FROM MEMBERS_ALL_CURRENT
+);
+
 
 -- ----------------------------------------------------------------------------
 -- STEP 6: Mark Processed Records in Landing Tables for Batch Tracking
@@ -1582,7 +1957,6 @@ WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;
 UPDATE RAW_REDEMPTIONS_LANDING
 SET PROCESSED_AT = CURRENT_TIMESTAMP()
 WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;
-
 
 
 -- Step 4B: Load Batch 2 arriving in a separate batch
@@ -1607,14 +1981,368 @@ DELETE FROM STG_MEMBER_PROFILE WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = '
 DELETE FROM TABLE_USA WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_101';
 
 -- Step 4C: Run production pipeline for Batch 2 via run_all.sql (Run 2: Processes Batch 2)
--- ==========================================
--- PIPELINE RUN #2
--- ==========================================
+-- ==================== INLINED 01_DDL.SQL ====================
+
+-- ============================================================================
+-- SkyPoints Airline Loyalty Program - Snowflake DDL Architecture
+-- Scalable for billions of daily records across flat files and JSON feeds
+-- ============================================================================
+
+-- Database and Schema Setup
+CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;
+CREATE SCHEMA IF NOT EXISTS SKYPOINTS_DB.CORE;
+USE SCHEMA SKYPOINTS_DB.CORE;
 
 -- ----------------------------------------------------------------------------
--- PIPELINE EXECUTION (run_all.sql inlined)
+-- 1. RAW LANDING TABLE: Member Profile Flat File
+-- Ingests raw pipe-delimited data as VARCHAR to guarantee zero load dropouts
 -- ----------------------------------------------------------------------------
--- 1. Transformations & Staging
+CREATE TABLE IF NOT EXISTS RAW_MEMBER_LANDING (
+    RECORD_TYPE          VARCHAR(10),     -- 'H' for Header, 'D' for Detail
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_NAME          VARCHAR(255),
+    MEMBER_ID            VARCHAR(50),
+    ENROLLMENT_DATE      VARCHAR(50),
+    LAST_FLIGHT_DATE     VARCHAR(50),
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50),
+    DOB                  VARCHAR(50),
+    IS_ACTIVE            VARCHAR(10),
+    POST_CODE            VARCHAR(50),
+    SOURCE_FILE_NAME     VARCHAR(255),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    LINE_NO              NUMBER,
+    BATCH_ID             VARCHAR(50),
+    PROCESSED_AT         TIMESTAMP_NTZ,
+    INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Dead Letter Queue (DLQ) table for quarantined malformed rows
+CREATE TABLE IF NOT EXISTS RAW_DLQ_QUARANTINE (
+    RECORD_ID            VARCHAR(50),
+    RAW_RECORD           VARCHAR,
+    RAW_RECORD_HASH      VARCHAR(64),
+    ERROR_REASON         VARCHAR(500),
+    SOURCE_FEED          VARCHAR(255),
+    SOURCE_SYSTEM        VARCHAR(30),
+    SOURCE_FILE_NAME     VARCHAR(255),
+    BATCH_ID             VARCHAR(50),
+    QUARANTINED_AT       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- ----------------------------------------------------------------------------
+-- 2. STAGING TABLE: Member Profile with Derived Columns
+-- Strongly-typed, normalized dates, plus Age & Stale_Member (> 90 days)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS STG_MEMBER_PROFILE (
+    STG_ROW_ID          VARCHAR          DEFAULT UUID_STRING(),
+    BATCH_ID             VARCHAR(50),
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50),
+    POST_CODE            NUMBER(5, 0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1)       DEFAULT 'A',
+    AGE                  INTEGER,         -- Derived: Exact calendar age
+    STALE_MEMBER         VARCHAR(1),      -- Derived: 'Y' if days since Flight_Date > 90 else 'N'
+    SOURCE_FILE_NAME     VARCHAR(255),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    LINE_NO              NUMBER,
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+    -- NOTE: Primary key constraints are removed from STG_MEMBER_PROFILE because staging
+    -- legitimately holds multiple records per key during ingestion prior to deduplication.
+    -- Snowflake does not enforce PRIMARY KEY constraints on country tables or marts.
+)
+CLUSTER BY (COUNTRY, ENROLLMENT_DATE);
+
+-- ----------------------------------------------------------------------------
+-- 3. COUNTRY-SPECIFIC TARGET TABLES
+-- Dedicated physical country tables clustered on MEMBER_ID
+-- NOTE: Primary key declarations are informational metadata; Snowflake does not
+-- enforce primary key uniqueness. Pipeline deduplication and MERGE logic enforce uniqueness.
+-- ----------------------------------------------------------------------------
+
+-- Table: India
+CREATE TABLE IF NOT EXISTS TABLE_INDIA (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'IND',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- Table: USA
+CREATE TABLE IF NOT EXISTS TABLE_USA (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'USA',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- Table: Australia
+CREATE TABLE IF NOT EXISTS TABLE_AU (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'AU',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- ----------------------------------------------------------------------------
+-- 4. SEMI-STRUCTURED REDEMPTION TABLES & MART TABLES
+-- ----------------------------------------------------------------------------
+
+-- Landing table for raw JSON documents
+CREATE TABLE IF NOT EXISTS RAW_REDEMPTIONS_LANDING (
+    FEED_PAYLOAD         VARIANT,
+    FEED_DATE            VARCHAR(50),
+    BATCH_ID             VARCHAR(50),
+    PROCESSED_AT         TIMESTAMP_NTZ,
+    INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Flattened relational redemptions table
+CREATE TABLE IF NOT EXISTS STG_REDEMPTIONS_FLATTENED (
+    TXN_ID               VARCHAR(50)      PRIMARY KEY,
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    FEED_DATE            DATE             NOT NULL,
+    TXN_DATE             DATE             NOT NULL,
+    PARTNER              VARCHAR(100)     NOT NULL,
+    MILES_REDEEMED       INTEGER          NOT NULL,
+    STATUS               VARCHAR(50)      NOT NULL,
+    IS_AMBIGUOUS         BOOLEAN          DEFAULT FALSE,
+    BATCH_ID             VARCHAR(50),
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+)
+CLUSTER BY (MEMBER_ID, TXN_DATE);
+
+-- Analytical mart table
+CREATE TABLE IF NOT EXISTS MEMBER_LOYALTY_360 (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255),
+    COUNTRY              VARCHAR(50),
+    TIER_CODE            VARCHAR(50),
+    ENROLLMENT_DATE      DATE,
+    LAST_FLIGHT_DATE     DATE,
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    TOTAL_REDEMPTIONS    INTEGER          DEFAULT 0,
+    TOTAL_MILES_REDEEMED INTEGER          DEFAULT 0,
+    PENDING_MILES_REDEEMED INTEGER        DEFAULT 0,
+    LAST_REDEMPTION_DATE DATE,
+    TOP_PARTNER          VARCHAR(100),
+    LAST_SYNC_AT         TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+);
+
+-- ----------------------------------------------------------------------------
+-- 5. SCHEMA EVOLUTION & MIGRATION STATEMENTS (FOR PRE-EXISTING SCHEMAS)
+-- Safe, idempotent column additions executed BEFORE views are created/updated
+-- so existing tables have all required columns before view compilation.
+-- ----------------------------------------------------------------------------
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
+ALTER TABLE RAW_MEMBER_LANDING MODIFY COLUMN TIER_CODE VARCHAR(50);
+
+ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
+
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS RAW_RECORD_HASH VARCHAR(64);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS SOURCE_SYSTEM VARCHAR(30);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS STG_ROW_ID VARCHAR;
+
+ALTER TABLE STG_REDEMPTIONS_FLATTENED ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+-- ----------------------------------------------------------------------------
+-- 6. REFERENCE TABLES: Country Table Mapping
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS REF_COUNTRY_MAP (
+    COUNTRY_CODE         VARCHAR(10)      PRIMARY KEY,
+    CANONICAL_CODE       VARCHAR(10)      NOT NULL,
+    TARGET_TABLE         VARCHAR(50)      NOT NULL
+);
+
+-- Seed Country Mappings (IND/INDIA -> TABLE_INDIA, USA -> TABLE_USA, AU/AUS -> TABLE_AU)
+MERGE INTO REF_COUNTRY_MAP target
+USING (
+    SELECT 'IND' AS code, 'IND' AS canonical, 'TABLE_INDIA' AS tbl UNION ALL
+    SELECT 'INDIA', 'IND', 'TABLE_INDIA' UNION ALL
+    SELECT 'USA', 'USA', 'TABLE_USA' UNION ALL
+    SELECT 'AU', 'AU', 'TABLE_AU' UNION ALL
+    SELECT 'AUS', 'AU', 'TABLE_AU'
+) src
+ON target.COUNTRY_CODE = src.code
+WHEN MATCHED THEN
+    UPDATE SET target.CANONICAL_CODE = src.canonical, target.TARGET_TABLE = src.tbl
+WHEN NOT MATCHED THEN
+    INSERT (COUNTRY_CODE, CANONICAL_CODE, TARGET_TABLE) VALUES (src.code, src.canonical, src.tbl);
+
+-- ----------------------------------------------------------------------------
+-- 7. UNIFIED COUNTRY MEMBERS VIEW
+-- Explicit column list projected across all country tables
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL AS
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_INDIA
+UNION ALL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_USA
+UNION ALL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_AU;
+
+-- ----------------------------------------------------------------------------
+-- 8. DYNAMIC UNIFIED MEMBERS VIEW (Query-Time Recalculation)
+-- Dynamically recomputes AGE and STALE_MEMBER at query time relative to CURRENT_DATE()
+-- while preserving static stored attributes in the country tables.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL_CURRENT AS
+SELECT
+    SOURCE_SYSTEM,
+    MEMBER_ID,
+    MEMBER_NAME,
+    ENROLLMENT_DATE,
+    LAST_FLIGHT_DATE,
+    TIER_CODE,
+    AGENT_NAME,
+    STATE,
+    COUNTRY,
+    POST_CODE,
+    DOB,
+    IS_ACTIVE,
+    -- Dynamically recomputed exact calendar age at query time
+    CASE
+        WHEN DOB IS NULL THEN NULL
+        ELSE DATEDIFF(year, DOB, CURRENT_DATE()) - 
+             CASE 
+                WHEN (MONTH(CURRENT_DATE()) < MONTH(DOB)) 
+                  OR (MONTH(CURRENT_DATE()) = MONTH(DOB) 
+                      AND DAY(CURRENT_DATE()) < DAY(DOB)) 
+                THEN 1 ELSE 0 
+             END
+    END AS AGE,
+    -- Dynamically recomputed stale member flag at query time (>90 days since flight)
+    CASE 
+        WHEN LAST_FLIGHT_DATE IS NULL THEN 'Y'
+        WHEN DATEDIFF(day, LAST_FLIGHT_DATE, CURRENT_DATE()) > 90 THEN 'Y'
+        ELSE 'N'
+    END AS STALE_MEMBER,
+    EXTRACT_TS,
+    SOURCE_FILE_NAME,
+    LINE_NO,
+    LAST_UPDATED_AT
+FROM MEMBERS_ALL;
+
+-- ----------------------------------------------------------------------------
+-- 9. DYNAMIC ANALYTICAL MART: Member Loyalty 360 Current View
+-- Reads stored redemption totals from MEMBER_LOYALTY_360 (the mart), which are
+-- refreshed each run by the pipeline, and recomputes only Age and Stale_Member
+-- dynamically relative to CURRENT_DATE() using MEMBERS_ALL_CURRENT.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBER_LOYALTY_360_CURRENT AS
+SELECT
+    m.SOURCE_SYSTEM,
+    m.MEMBER_ID,
+    m.MEMBER_NAME,
+    m.COUNTRY,
+    m.TIER_CODE,
+    m.ENROLLMENT_DATE,
+    m.LAST_FLIGHT_DATE,
+    m.AGE,
+    m.STALE_MEMBER,
+    COALESCE(l.TOTAL_REDEMPTIONS, 0) AS TOTAL_REDEMPTIONS,
+    COALESCE(l.TOTAL_MILES_REDEEMED, 0) AS TOTAL_MILES_REDEEMED,
+    COALESCE(l.PENDING_MILES_REDEEMED, 0) AS PENDING_MILES_REDEEMED,
+    l.LAST_REDEMPTION_DATE,
+    COALESCE(l.TOP_PARTNER, 'None') AS TOP_PARTNER,
+    CURRENT_TIMESTAMP() AS LAST_SYNC_AT
+FROM MEMBERS_ALL_CURRENT m
+LEFT JOIN MEMBER_LOYALTY_360 l
+    ON m.SOURCE_SYSTEM = l.SOURCE_SYSTEM AND m.MEMBER_ID = l.MEMBER_ID;
+
+
+-- ==================== INLINED 03_TRANSFORMATIONS.SQL ====================
+
 -- ============================================================================
 -- SkyPoints Snowflake Staging Load & Country Split Transformation Logic
 -- Implements:
@@ -1631,7 +2359,7 @@ DELETE FROM TABLE_USA WHERE SOURCE_SYSTEM = 'USA_SYS' AND MEMBER_ID = 'RESOLVE_1
 -- ----------------------------------------------------------------------------
 -- STEP 0: Initialize Session Batch ID for Idempotent Execution
 -- ----------------------------------------------------------------------------
-SET run_batch_id = UUID_STRING();
+SET run_batch_id = (SELECT UUID_STRING());
 
 -- STG_MEMBER_PROFILE is per-batch; truncate before loading the incoming batch
 TRUNCATE TABLE STG_MEMBER_PROFILE;
@@ -1705,8 +2433,8 @@ SELECT
         WHEN s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL THEN 'Invalid DOB: unparseable calendar date'
         WHEN LENGTH(s.MEMBER_ID) > 18 THEN 'Member_Id exceeds 18 characters'
         WHEN s.COUNTRY IS NULL THEN 'Unmapped country: Country is required and cannot be empty'
-        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN m.CANONICAL_CODE IS NULL THEN 'Unmapped country'
+        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5 THEN 'State exceeds 5 characters'
         WHEN s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5) THEN 'Invalid Post_Code: must be numeric up to 5 digits'
         WHEN s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV') THEN 'Invalid domain value: Tier_Code not in (PLT, GLD, SLV)'
@@ -2109,6 +2837,7 @@ USING (
       AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) >= 0
       AND r.value:partner IS NOT NULL AND NULLIF(TRIM(r.value:partner::STRING), '') IS NOT NULL
       AND r.value:status IS NOT NULL AND NULLIF(TRIM(r.value:status::STRING), '') IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY r.value:txn_id::STRING ORDER BY raw.INGESTED_AT DESC) = 1
 ) src
 ON target.TXN_ID = src.TXN_ID
 WHEN MATCHED THEN
@@ -2127,7 +2856,8 @@ WHEN NOT MATCHED THEN
 
 
 
--- 2. Country Routing & Migration Merges
+-- ==================== INLINED 04_COUNTRY_MERGES.SQL ====================
+
 -- ============================================================================
 -- Static Country MERGE & Migration DELETE Statements for Snowflake
 -- Generated automatically by scripts/generate_country_merges.py
@@ -2505,7 +3235,8 @@ WHERE EXISTS (
 
 
 
--- 3. Mart Aggregation & Batch Finalization
+-- ==================== INLINED 05_MART_AND_FINALIZE.SQL ====================
+
 -- ============================================================================
 -- SkyPoints Step 3: Analytical Mart Build & Finalize Landing Batch Tracking
 -- NOTE: run_batch_id is a session variable initialized in transformations.sql.
@@ -2564,6 +3295,14 @@ AND target.RAW_RECORD_HASH = src.RAW_RECORD_HASH
 WHEN NOT MATCHED THEN
     INSERT (RECORD_ID, RAW_RECORD, RAW_RECORD_HASH, ERROR_REASON, SOURCE_FEED, SOURCE_SYSTEM, SOURCE_FILE_NAME, BATCH_ID, QUARANTINED_AT)
     VALUES (src.RECORD_ID, src.RAW_RECORD, src.RAW_RECORD_HASH, src.ERROR_REASON, src.SOURCE_FEED, src.SOURCE_SYSTEM, src.SOURCE_FILE_NAME, src.BATCH_ID, CURRENT_TIMESTAMP());
+
+-- Remove resolved redemptions from DLQ when ambiguity disappears
+DELETE FROM RAW_DLQ_QUARANTINE
+WHERE SOURCE_FEED = 'STG_REDEMPTIONS_FLATTENED'
+  AND ERROR_REASON = 'Ambiguous member_id across source systems'
+  AND RECORD_ID IN (
+      SELECT red.TXN_ID FROM STG_REDEMPTIONS_FLATTENED red WHERE red.IS_AMBIGUOUS = FALSE
+  );
 
 -- 2. Build or Refresh MEMBER_LOYALTY_360 Mart (Idempotent MERGE for affected members)
 -- Keyed on (SOURCE_SYSTEM, MEMBER_ID) from MEMBERS_ALL_CURRENT; touches only members affected by this batch,
@@ -2673,6 +3412,12 @@ WHEN NOT MATCHED THEN
         src.LAST_REDEMPTION_DATE, src.TOP_PARTNER, CURRENT_TIMESTAMP()
     );
 
+-- Remove members from mart that no longer exist in unified current members view (e.g. cross-country moves or hard deletes)
+DELETE FROM MEMBER_LOYALTY_360
+WHERE (SOURCE_SYSTEM, MEMBER_ID) NOT IN (
+    SELECT SOURCE_SYSTEM, MEMBER_ID FROM MEMBERS_ALL_CURRENT
+);
+
 
 -- ----------------------------------------------------------------------------
 -- STEP 6: Mark Processed Records in Landing Tables for Batch Tracking
@@ -2685,7 +3430,6 @@ WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;
 UPDATE RAW_REDEMPTIONS_LANDING
 SET PROCESSED_AT = CURRENT_TIMESTAMP()
 WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;
-
 
 
 -- Step 5: Capture snapshot of mart and table counts BEFORE rerun into temporary table
@@ -2700,14 +3444,368 @@ SELECT
     (SELECT TO_VARCHAR(COALESCE(PENDING_MILES_REDEEMED, 0)) FROM MEMBER_LOYALTY_360 WHERE MEMBER_ID = 'MOVE_101') AS MOVE_101_PENDING_MILES;
 
 -- Step 5B: Execute Idempotent Rerun via run_all.sql (Run 3: Empty idempotent rerun)
--- ==========================================
--- PIPELINE RUN #3
--- ==========================================
+-- ==================== INLINED 01_DDL.SQL ====================
+
+-- ============================================================================
+-- SkyPoints Airline Loyalty Program - Snowflake DDL Architecture
+-- Scalable for billions of daily records across flat files and JSON feeds
+-- ============================================================================
+
+-- Database and Schema Setup
+CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;
+CREATE SCHEMA IF NOT EXISTS SKYPOINTS_DB.CORE;
+USE SCHEMA SKYPOINTS_DB.CORE;
 
 -- ----------------------------------------------------------------------------
--- PIPELINE EXECUTION (run_all.sql inlined)
+-- 1. RAW LANDING TABLE: Member Profile Flat File
+-- Ingests raw pipe-delimited data as VARCHAR to guarantee zero load dropouts
 -- ----------------------------------------------------------------------------
--- 1. Transformations & Staging
+CREATE TABLE IF NOT EXISTS RAW_MEMBER_LANDING (
+    RECORD_TYPE          VARCHAR(10),     -- 'H' for Header, 'D' for Detail
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_NAME          VARCHAR(255),
+    MEMBER_ID            VARCHAR(50),
+    ENROLLMENT_DATE      VARCHAR(50),
+    LAST_FLIGHT_DATE     VARCHAR(50),
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50),
+    DOB                  VARCHAR(50),
+    IS_ACTIVE            VARCHAR(10),
+    POST_CODE            VARCHAR(50),
+    SOURCE_FILE_NAME     VARCHAR(255),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    LINE_NO              NUMBER,
+    BATCH_ID             VARCHAR(50),
+    PROCESSED_AT         TIMESTAMP_NTZ,
+    INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Dead Letter Queue (DLQ) table for quarantined malformed rows
+CREATE TABLE IF NOT EXISTS RAW_DLQ_QUARANTINE (
+    RECORD_ID            VARCHAR(50),
+    RAW_RECORD           VARCHAR,
+    RAW_RECORD_HASH      VARCHAR(64),
+    ERROR_REASON         VARCHAR(500),
+    SOURCE_FEED          VARCHAR(255),
+    SOURCE_SYSTEM        VARCHAR(30),
+    SOURCE_FILE_NAME     VARCHAR(255),
+    BATCH_ID             VARCHAR(50),
+    QUARANTINED_AT       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- ----------------------------------------------------------------------------
+-- 2. STAGING TABLE: Member Profile with Derived Columns
+-- Strongly-typed, normalized dates, plus Age & Stale_Member (> 90 days)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS STG_MEMBER_PROFILE (
+    STG_ROW_ID          VARCHAR          DEFAULT UUID_STRING(),
+    BATCH_ID             VARCHAR(50),
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50),
+    POST_CODE            NUMBER(5, 0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1)       DEFAULT 'A',
+    AGE                  INTEGER,         -- Derived: Exact calendar age
+    STALE_MEMBER         VARCHAR(1),      -- Derived: 'Y' if days since Flight_Date > 90 else 'N'
+    SOURCE_FILE_NAME     VARCHAR(255),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    LINE_NO              NUMBER,
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+    -- NOTE: Primary key constraints are removed from STG_MEMBER_PROFILE because staging
+    -- legitimately holds multiple records per key during ingestion prior to deduplication.
+    -- Snowflake does not enforce PRIMARY KEY constraints on country tables or marts.
+)
+CLUSTER BY (COUNTRY, ENROLLMENT_DATE);
+
+-- ----------------------------------------------------------------------------
+-- 3. COUNTRY-SPECIFIC TARGET TABLES
+-- Dedicated physical country tables clustered on MEMBER_ID
+-- NOTE: Primary key declarations are informational metadata; Snowflake does not
+-- enforce primary key uniqueness. Pipeline deduplication and MERGE logic enforce uniqueness.
+-- ----------------------------------------------------------------------------
+
+-- Table: India
+CREATE TABLE IF NOT EXISTS TABLE_INDIA (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'IND',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- Table: USA
+CREATE TABLE IF NOT EXISTS TABLE_USA (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'USA',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- Table: Australia
+CREATE TABLE IF NOT EXISTS TABLE_AU (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'AU',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- ----------------------------------------------------------------------------
+-- 4. SEMI-STRUCTURED REDEMPTION TABLES & MART TABLES
+-- ----------------------------------------------------------------------------
+
+-- Landing table for raw JSON documents
+CREATE TABLE IF NOT EXISTS RAW_REDEMPTIONS_LANDING (
+    FEED_PAYLOAD         VARIANT,
+    FEED_DATE            VARCHAR(50),
+    BATCH_ID             VARCHAR(50),
+    PROCESSED_AT         TIMESTAMP_NTZ,
+    INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Flattened relational redemptions table
+CREATE TABLE IF NOT EXISTS STG_REDEMPTIONS_FLATTENED (
+    TXN_ID               VARCHAR(50)      PRIMARY KEY,
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    FEED_DATE            DATE             NOT NULL,
+    TXN_DATE             DATE             NOT NULL,
+    PARTNER              VARCHAR(100)     NOT NULL,
+    MILES_REDEEMED       INTEGER          NOT NULL,
+    STATUS               VARCHAR(50)      NOT NULL,
+    IS_AMBIGUOUS         BOOLEAN          DEFAULT FALSE,
+    BATCH_ID             VARCHAR(50),
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+)
+CLUSTER BY (MEMBER_ID, TXN_DATE);
+
+-- Analytical mart table
+CREATE TABLE IF NOT EXISTS MEMBER_LOYALTY_360 (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255),
+    COUNTRY              VARCHAR(50),
+    TIER_CODE            VARCHAR(50),
+    ENROLLMENT_DATE      DATE,
+    LAST_FLIGHT_DATE     DATE,
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    TOTAL_REDEMPTIONS    INTEGER          DEFAULT 0,
+    TOTAL_MILES_REDEEMED INTEGER          DEFAULT 0,
+    PENDING_MILES_REDEEMED INTEGER        DEFAULT 0,
+    LAST_REDEMPTION_DATE DATE,
+    TOP_PARTNER          VARCHAR(100),
+    LAST_SYNC_AT         TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+);
+
+-- ----------------------------------------------------------------------------
+-- 5. SCHEMA EVOLUTION & MIGRATION STATEMENTS (FOR PRE-EXISTING SCHEMAS)
+-- Safe, idempotent column additions executed BEFORE views are created/updated
+-- so existing tables have all required columns before view compilation.
+-- ----------------------------------------------------------------------------
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
+ALTER TABLE RAW_MEMBER_LANDING MODIFY COLUMN TIER_CODE VARCHAR(50);
+
+ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
+
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS RAW_RECORD_HASH VARCHAR(64);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS SOURCE_SYSTEM VARCHAR(30);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS STG_ROW_ID VARCHAR;
+
+ALTER TABLE STG_REDEMPTIONS_FLATTENED ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+-- ----------------------------------------------------------------------------
+-- 6. REFERENCE TABLES: Country Table Mapping
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS REF_COUNTRY_MAP (
+    COUNTRY_CODE         VARCHAR(10)      PRIMARY KEY,
+    CANONICAL_CODE       VARCHAR(10)      NOT NULL,
+    TARGET_TABLE         VARCHAR(50)      NOT NULL
+);
+
+-- Seed Country Mappings (IND/INDIA -> TABLE_INDIA, USA -> TABLE_USA, AU/AUS -> TABLE_AU)
+MERGE INTO REF_COUNTRY_MAP target
+USING (
+    SELECT 'IND' AS code, 'IND' AS canonical, 'TABLE_INDIA' AS tbl UNION ALL
+    SELECT 'INDIA', 'IND', 'TABLE_INDIA' UNION ALL
+    SELECT 'USA', 'USA', 'TABLE_USA' UNION ALL
+    SELECT 'AU', 'AU', 'TABLE_AU' UNION ALL
+    SELECT 'AUS', 'AU', 'TABLE_AU'
+) src
+ON target.COUNTRY_CODE = src.code
+WHEN MATCHED THEN
+    UPDATE SET target.CANONICAL_CODE = src.canonical, target.TARGET_TABLE = src.tbl
+WHEN NOT MATCHED THEN
+    INSERT (COUNTRY_CODE, CANONICAL_CODE, TARGET_TABLE) VALUES (src.code, src.canonical, src.tbl);
+
+-- ----------------------------------------------------------------------------
+-- 7. UNIFIED COUNTRY MEMBERS VIEW
+-- Explicit column list projected across all country tables
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL AS
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_INDIA
+UNION ALL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_USA
+UNION ALL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_AU;
+
+-- ----------------------------------------------------------------------------
+-- 8. DYNAMIC UNIFIED MEMBERS VIEW (Query-Time Recalculation)
+-- Dynamically recomputes AGE and STALE_MEMBER at query time relative to CURRENT_DATE()
+-- while preserving static stored attributes in the country tables.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL_CURRENT AS
+SELECT
+    SOURCE_SYSTEM,
+    MEMBER_ID,
+    MEMBER_NAME,
+    ENROLLMENT_DATE,
+    LAST_FLIGHT_DATE,
+    TIER_CODE,
+    AGENT_NAME,
+    STATE,
+    COUNTRY,
+    POST_CODE,
+    DOB,
+    IS_ACTIVE,
+    -- Dynamically recomputed exact calendar age at query time
+    CASE
+        WHEN DOB IS NULL THEN NULL
+        ELSE DATEDIFF(year, DOB, CURRENT_DATE()) - 
+             CASE 
+                WHEN (MONTH(CURRENT_DATE()) < MONTH(DOB)) 
+                  OR (MONTH(CURRENT_DATE()) = MONTH(DOB) 
+                      AND DAY(CURRENT_DATE()) < DAY(DOB)) 
+                THEN 1 ELSE 0 
+             END
+    END AS AGE,
+    -- Dynamically recomputed stale member flag at query time (>90 days since flight)
+    CASE 
+        WHEN LAST_FLIGHT_DATE IS NULL THEN 'Y'
+        WHEN DATEDIFF(day, LAST_FLIGHT_DATE, CURRENT_DATE()) > 90 THEN 'Y'
+        ELSE 'N'
+    END AS STALE_MEMBER,
+    EXTRACT_TS,
+    SOURCE_FILE_NAME,
+    LINE_NO,
+    LAST_UPDATED_AT
+FROM MEMBERS_ALL;
+
+-- ----------------------------------------------------------------------------
+-- 9. DYNAMIC ANALYTICAL MART: Member Loyalty 360 Current View
+-- Reads stored redemption totals from MEMBER_LOYALTY_360 (the mart), which are
+-- refreshed each run by the pipeline, and recomputes only Age and Stale_Member
+-- dynamically relative to CURRENT_DATE() using MEMBERS_ALL_CURRENT.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBER_LOYALTY_360_CURRENT AS
+SELECT
+    m.SOURCE_SYSTEM,
+    m.MEMBER_ID,
+    m.MEMBER_NAME,
+    m.COUNTRY,
+    m.TIER_CODE,
+    m.ENROLLMENT_DATE,
+    m.LAST_FLIGHT_DATE,
+    m.AGE,
+    m.STALE_MEMBER,
+    COALESCE(l.TOTAL_REDEMPTIONS, 0) AS TOTAL_REDEMPTIONS,
+    COALESCE(l.TOTAL_MILES_REDEEMED, 0) AS TOTAL_MILES_REDEEMED,
+    COALESCE(l.PENDING_MILES_REDEEMED, 0) AS PENDING_MILES_REDEEMED,
+    l.LAST_REDEMPTION_DATE,
+    COALESCE(l.TOP_PARTNER, 'None') AS TOP_PARTNER,
+    CURRENT_TIMESTAMP() AS LAST_SYNC_AT
+FROM MEMBERS_ALL_CURRENT m
+LEFT JOIN MEMBER_LOYALTY_360 l
+    ON m.SOURCE_SYSTEM = l.SOURCE_SYSTEM AND m.MEMBER_ID = l.MEMBER_ID;
+
+
+-- ==================== INLINED 03_TRANSFORMATIONS.SQL ====================
+
 -- ============================================================================
 -- SkyPoints Snowflake Staging Load & Country Split Transformation Logic
 -- Implements:
@@ -2724,7 +3822,7 @@ SELECT
 -- ----------------------------------------------------------------------------
 -- STEP 0: Initialize Session Batch ID for Idempotent Execution
 -- ----------------------------------------------------------------------------
-SET run_batch_id = UUID_STRING();
+SET run_batch_id = (SELECT UUID_STRING());
 
 -- STG_MEMBER_PROFILE is per-batch; truncate before loading the incoming batch
 TRUNCATE TABLE STG_MEMBER_PROFILE;
@@ -2798,8 +3896,8 @@ SELECT
         WHEN s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL THEN 'Invalid DOB: unparseable calendar date'
         WHEN LENGTH(s.MEMBER_ID) > 18 THEN 'Member_Id exceeds 18 characters'
         WHEN s.COUNTRY IS NULL THEN 'Unmapped country: Country is required and cannot be empty'
-        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN m.CANONICAL_CODE IS NULL THEN 'Unmapped country'
+        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5 THEN 'State exceeds 5 characters'
         WHEN s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5) THEN 'Invalid Post_Code: must be numeric up to 5 digits'
         WHEN s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV') THEN 'Invalid domain value: Tier_Code not in (PLT, GLD, SLV)'
@@ -3202,6 +4300,7 @@ USING (
       AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) >= 0
       AND r.value:partner IS NOT NULL AND NULLIF(TRIM(r.value:partner::STRING), '') IS NOT NULL
       AND r.value:status IS NOT NULL AND NULLIF(TRIM(r.value:status::STRING), '') IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY r.value:txn_id::STRING ORDER BY raw.INGESTED_AT DESC) = 1
 ) src
 ON target.TXN_ID = src.TXN_ID
 WHEN MATCHED THEN
@@ -3220,7 +4319,8 @@ WHEN NOT MATCHED THEN
 
 
 
--- 2. Country Routing & Migration Merges
+-- ==================== INLINED 04_COUNTRY_MERGES.SQL ====================
+
 -- ============================================================================
 -- Static Country MERGE & Migration DELETE Statements for Snowflake
 -- Generated automatically by scripts/generate_country_merges.py
@@ -3598,7 +4698,8 @@ WHERE EXISTS (
 
 
 
--- 3. Mart Aggregation & Batch Finalization
+-- ==================== INLINED 05_MART_AND_FINALIZE.SQL ====================
+
 -- ============================================================================
 -- SkyPoints Step 3: Analytical Mart Build & Finalize Landing Batch Tracking
 -- NOTE: run_batch_id is a session variable initialized in transformations.sql.
@@ -3657,6 +4758,14 @@ AND target.RAW_RECORD_HASH = src.RAW_RECORD_HASH
 WHEN NOT MATCHED THEN
     INSERT (RECORD_ID, RAW_RECORD, RAW_RECORD_HASH, ERROR_REASON, SOURCE_FEED, SOURCE_SYSTEM, SOURCE_FILE_NAME, BATCH_ID, QUARANTINED_AT)
     VALUES (src.RECORD_ID, src.RAW_RECORD, src.RAW_RECORD_HASH, src.ERROR_REASON, src.SOURCE_FEED, src.SOURCE_SYSTEM, src.SOURCE_FILE_NAME, src.BATCH_ID, CURRENT_TIMESTAMP());
+
+-- Remove resolved redemptions from DLQ when ambiguity disappears
+DELETE FROM RAW_DLQ_QUARANTINE
+WHERE SOURCE_FEED = 'STG_REDEMPTIONS_FLATTENED'
+  AND ERROR_REASON = 'Ambiguous member_id across source systems'
+  AND RECORD_ID IN (
+      SELECT red.TXN_ID FROM STG_REDEMPTIONS_FLATTENED red WHERE red.IS_AMBIGUOUS = FALSE
+  );
 
 -- 2. Build or Refresh MEMBER_LOYALTY_360 Mart (Idempotent MERGE for affected members)
 -- Keyed on (SOURCE_SYSTEM, MEMBER_ID) from MEMBERS_ALL_CURRENT; touches only members affected by this batch,
@@ -3766,6 +4875,12 @@ WHEN NOT MATCHED THEN
         src.LAST_REDEMPTION_DATE, src.TOP_PARTNER, CURRENT_TIMESTAMP()
     );
 
+-- Remove members from mart that no longer exist in unified current members view (e.g. cross-country moves or hard deletes)
+DELETE FROM MEMBER_LOYALTY_360
+WHERE (SOURCE_SYSTEM, MEMBER_ID) NOT IN (
+    SELECT SOURCE_SYSTEM, MEMBER_ID FROM MEMBERS_ALL_CURRENT
+);
+
 
 -- ----------------------------------------------------------------------------
 -- STEP 6: Mark Processed Records in Landing Tables for Batch Tracking
@@ -3780,6 +4895,13 @@ SET PROCESSED_AT = CURRENT_TIMESTAMP()
 WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;
 
 
+-- Capture snapshot of counts right after empty rerun to verify zero delta
+CREATE OR REPLACE TEMPORARY TABLE POST_RERUN_SNAPSHOT AS
+SELECT
+    (SELECT COUNT(*) FROM STG_MEMBER_PROFILE) AS STG_MEMBER_COUNT,
+    (SELECT COUNT(*) FROM RAW_DLQ_QUARANTINE) AS DLQ_COUNT,
+    (SELECT COUNT(*) FROM STG_REDEMPTIONS_FLATTENED) AS STG_REDEMP_COUNT,
+    (SELECT COUNT(*) FROM MEMBER_LOYALTY_360) AS MART_COUNT;
 
 -- Step 5C: Simulate in-flight arrival landing after batch finalization (BATCH_ID IS NULL)
 INSERT INTO RAW_MEMBER_LANDING (
@@ -3789,14 +4911,368 @@ INSERT INTO RAW_MEMBER_LANDING (
 ('D', 'FLAT_FILE', 'INFLIGHT_1', 'Inflight User', '20240101', '20240101', 'GLD', 'AgentN', 'CA', 'USA', '01011990', 'A', '90210', 'inflight_arrival.dat');
 
 -- Run 4: Claims and processes in-flight record
--- ==========================================
--- PIPELINE RUN #4
--- ==========================================
+-- ==================== INLINED 01_DDL.SQL ====================
+
+-- ============================================================================
+-- SkyPoints Airline Loyalty Program - Snowflake DDL Architecture
+-- Scalable for billions of daily records across flat files and JSON feeds
+-- ============================================================================
+
+-- Database and Schema Setup
+CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;
+CREATE SCHEMA IF NOT EXISTS SKYPOINTS_DB.CORE;
+USE SCHEMA SKYPOINTS_DB.CORE;
 
 -- ----------------------------------------------------------------------------
--- PIPELINE EXECUTION (run_all.sql inlined)
+-- 1. RAW LANDING TABLE: Member Profile Flat File
+-- Ingests raw pipe-delimited data as VARCHAR to guarantee zero load dropouts
 -- ----------------------------------------------------------------------------
--- 1. Transformations & Staging
+CREATE TABLE IF NOT EXISTS RAW_MEMBER_LANDING (
+    RECORD_TYPE          VARCHAR(10),     -- 'H' for Header, 'D' for Detail
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_NAME          VARCHAR(255),
+    MEMBER_ID            VARCHAR(50),
+    ENROLLMENT_DATE      VARCHAR(50),
+    LAST_FLIGHT_DATE     VARCHAR(50),
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50),
+    DOB                  VARCHAR(50),
+    IS_ACTIVE            VARCHAR(10),
+    POST_CODE            VARCHAR(50),
+    SOURCE_FILE_NAME     VARCHAR(255),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    LINE_NO              NUMBER,
+    BATCH_ID             VARCHAR(50),
+    PROCESSED_AT         TIMESTAMP_NTZ,
+    INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Dead Letter Queue (DLQ) table for quarantined malformed rows
+CREATE TABLE IF NOT EXISTS RAW_DLQ_QUARANTINE (
+    RECORD_ID            VARCHAR(50),
+    RAW_RECORD           VARCHAR,
+    RAW_RECORD_HASH      VARCHAR(64),
+    ERROR_REASON         VARCHAR(500),
+    SOURCE_FEED          VARCHAR(255),
+    SOURCE_SYSTEM        VARCHAR(30),
+    SOURCE_FILE_NAME     VARCHAR(255),
+    BATCH_ID             VARCHAR(50),
+    QUARANTINED_AT       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- ----------------------------------------------------------------------------
+-- 2. STAGING TABLE: Member Profile with Derived Columns
+-- Strongly-typed, normalized dates, plus Age & Stale_Member (> 90 days)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS STG_MEMBER_PROFILE (
+    STG_ROW_ID          VARCHAR          DEFAULT UUID_STRING(),
+    BATCH_ID             VARCHAR(50),
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50),
+    POST_CODE            NUMBER(5, 0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1)       DEFAULT 'A',
+    AGE                  INTEGER,         -- Derived: Exact calendar age
+    STALE_MEMBER         VARCHAR(1),      -- Derived: 'Y' if days since Flight_Date > 90 else 'N'
+    SOURCE_FILE_NAME     VARCHAR(255),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    LINE_NO              NUMBER,
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+    -- NOTE: Primary key constraints are removed from STG_MEMBER_PROFILE because staging
+    -- legitimately holds multiple records per key during ingestion prior to deduplication.
+    -- Snowflake does not enforce PRIMARY KEY constraints on country tables or marts.
+)
+CLUSTER BY (COUNTRY, ENROLLMENT_DATE);
+
+-- ----------------------------------------------------------------------------
+-- 3. COUNTRY-SPECIFIC TARGET TABLES
+-- Dedicated physical country tables clustered on MEMBER_ID
+-- NOTE: Primary key declarations are informational metadata; Snowflake does not
+-- enforce primary key uniqueness. Pipeline deduplication and MERGE logic enforce uniqueness.
+-- ----------------------------------------------------------------------------
+
+-- Table: India
+CREATE TABLE IF NOT EXISTS TABLE_INDIA (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'IND',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- Table: USA
+CREATE TABLE IF NOT EXISTS TABLE_USA (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'USA',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- Table: Australia
+CREATE TABLE IF NOT EXISTS TABLE_AU (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255)     NOT NULL,
+    ENROLLMENT_DATE      DATE             NOT NULL,
+    LAST_FLIGHT_DATE     DATE,
+    TIER_CODE            VARCHAR(50),
+    AGENT_NAME           VARCHAR(255),
+    STATE                VARCHAR(50),
+    COUNTRY              VARCHAR(50)      DEFAULT 'AU',
+    POST_CODE            NUMBER(5,0),
+    DOB                  DATE,
+    IS_ACTIVE            VARCHAR(1),
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    EXTRACT_TS           TIMESTAMP_NTZ,
+    SOURCE_FILE_NAME     VARCHAR(255),
+    LINE_NO              NUMBER,
+    LAST_UPDATED_AT      TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+)
+CLUSTER BY (MEMBER_ID);
+
+-- ----------------------------------------------------------------------------
+-- 4. SEMI-STRUCTURED REDEMPTION TABLES & MART TABLES
+-- ----------------------------------------------------------------------------
+
+-- Landing table for raw JSON documents
+CREATE TABLE IF NOT EXISTS RAW_REDEMPTIONS_LANDING (
+    FEED_PAYLOAD         VARIANT,
+    FEED_DATE            VARCHAR(50),
+    BATCH_ID             VARCHAR(50),
+    PROCESSED_AT         TIMESTAMP_NTZ,
+    INGESTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Flattened relational redemptions table
+CREATE TABLE IF NOT EXISTS STG_REDEMPTIONS_FLATTENED (
+    TXN_ID               VARCHAR(50)      PRIMARY KEY,
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    FEED_DATE            DATE             NOT NULL,
+    TXN_DATE             DATE             NOT NULL,
+    PARTNER              VARCHAR(100)     NOT NULL,
+    MILES_REDEEMED       INTEGER          NOT NULL,
+    STATUS               VARCHAR(50)      NOT NULL,
+    IS_AMBIGUOUS         BOOLEAN          DEFAULT FALSE,
+    BATCH_ID             VARCHAR(50),
+    INGESTED_AT          TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+)
+CLUSTER BY (MEMBER_ID, TXN_DATE);
+
+-- Analytical mart table
+CREATE TABLE IF NOT EXISTS MEMBER_LOYALTY_360 (
+    SOURCE_SYSTEM        VARCHAR(30)      NOT NULL DEFAULT 'FLAT_FILE',
+    MEMBER_ID            VARCHAR(50)      NOT NULL,
+    MEMBER_NAME          VARCHAR(255),
+    COUNTRY              VARCHAR(50),
+    TIER_CODE            VARCHAR(50),
+    ENROLLMENT_DATE      DATE,
+    LAST_FLIGHT_DATE     DATE,
+    AGE                  INTEGER,
+    STALE_MEMBER         VARCHAR(1),
+    TOTAL_REDEMPTIONS    INTEGER          DEFAULT 0,
+    TOTAL_MILES_REDEEMED INTEGER          DEFAULT 0,
+    PENDING_MILES_REDEEMED INTEGER        DEFAULT 0,
+    LAST_REDEMPTION_DATE DATE,
+    TOP_PARTNER          VARCHAR(100),
+    LAST_SYNC_AT         TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (SOURCE_SYSTEM, MEMBER_ID)
+);
+
+-- ----------------------------------------------------------------------------
+-- 5. SCHEMA EVOLUTION & MIGRATION STATEMENTS (FOR PRE-EXISTING SCHEMAS)
+-- Safe, idempotent column additions executed BEFORE views are created/updated
+-- so existing tables have all required columns before view compilation.
+-- ----------------------------------------------------------------------------
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE RAW_MEMBER_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
+ALTER TABLE RAW_MEMBER_LANDING MODIFY COLUMN TIER_CODE VARCHAR(50);
+
+ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE RAW_REDEMPTIONS_LANDING ADD COLUMN IF NOT EXISTS PROCESSED_AT TIMESTAMP_NTZ;
+
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS RAW_RECORD_HASH VARCHAR(64);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS SOURCE_SYSTEM VARCHAR(30);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE RAW_DLQ_QUARANTINE ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+ALTER TABLE STG_MEMBER_PROFILE ADD COLUMN IF NOT EXISTS STG_ROW_ID VARCHAR;
+
+ALTER TABLE STG_REDEMPTIONS_FLATTENED ADD COLUMN IF NOT EXISTS BATCH_ID VARCHAR(50);
+
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_INDIA ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_USA ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS POST_CODE NUMBER(5,0);
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS EXTRACT_TS TIMESTAMP_NTZ;
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS EXTRACT_DATE DATE;
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS SOURCE_FILE_NAME VARCHAR(255);
+ALTER TABLE TABLE_AU ADD COLUMN IF NOT EXISTS LINE_NO NUMBER;
+
+-- ----------------------------------------------------------------------------
+-- 6. REFERENCE TABLES: Country Table Mapping
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS REF_COUNTRY_MAP (
+    COUNTRY_CODE         VARCHAR(10)      PRIMARY KEY,
+    CANONICAL_CODE       VARCHAR(10)      NOT NULL,
+    TARGET_TABLE         VARCHAR(50)      NOT NULL
+);
+
+-- Seed Country Mappings (IND/INDIA -> TABLE_INDIA, USA -> TABLE_USA, AU/AUS -> TABLE_AU)
+MERGE INTO REF_COUNTRY_MAP target
+USING (
+    SELECT 'IND' AS code, 'IND' AS canonical, 'TABLE_INDIA' AS tbl UNION ALL
+    SELECT 'INDIA', 'IND', 'TABLE_INDIA' UNION ALL
+    SELECT 'USA', 'USA', 'TABLE_USA' UNION ALL
+    SELECT 'AU', 'AU', 'TABLE_AU' UNION ALL
+    SELECT 'AUS', 'AU', 'TABLE_AU'
+) src
+ON target.COUNTRY_CODE = src.code
+WHEN MATCHED THEN
+    UPDATE SET target.CANONICAL_CODE = src.canonical, target.TARGET_TABLE = src.tbl
+WHEN NOT MATCHED THEN
+    INSERT (COUNTRY_CODE, CANONICAL_CODE, TARGET_TABLE) VALUES (src.code, src.canonical, src.tbl);
+
+-- ----------------------------------------------------------------------------
+-- 7. UNIFIED COUNTRY MEMBERS VIEW
+-- Explicit column list projected across all country tables
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL AS
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_INDIA
+UNION ALL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_USA
+UNION ALL
+SELECT SOURCE_SYSTEM, MEMBER_ID, MEMBER_NAME, ENROLLMENT_DATE, LAST_FLIGHT_DATE, TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS, SOURCE_FILE_NAME, LINE_NO, LAST_UPDATED_AT FROM TABLE_AU;
+
+-- ----------------------------------------------------------------------------
+-- 8. DYNAMIC UNIFIED MEMBERS VIEW (Query-Time Recalculation)
+-- Dynamically recomputes AGE and STALE_MEMBER at query time relative to CURRENT_DATE()
+-- while preserving static stored attributes in the country tables.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBERS_ALL_CURRENT AS
+SELECT
+    SOURCE_SYSTEM,
+    MEMBER_ID,
+    MEMBER_NAME,
+    ENROLLMENT_DATE,
+    LAST_FLIGHT_DATE,
+    TIER_CODE,
+    AGENT_NAME,
+    STATE,
+    COUNTRY,
+    POST_CODE,
+    DOB,
+    IS_ACTIVE,
+    -- Dynamically recomputed exact calendar age at query time
+    CASE
+        WHEN DOB IS NULL THEN NULL
+        ELSE DATEDIFF(year, DOB, CURRENT_DATE()) - 
+             CASE 
+                WHEN (MONTH(CURRENT_DATE()) < MONTH(DOB)) 
+                  OR (MONTH(CURRENT_DATE()) = MONTH(DOB) 
+                      AND DAY(CURRENT_DATE()) < DAY(DOB)) 
+                THEN 1 ELSE 0 
+             END
+    END AS AGE,
+    -- Dynamically recomputed stale member flag at query time (>90 days since flight)
+    CASE 
+        WHEN LAST_FLIGHT_DATE IS NULL THEN 'Y'
+        WHEN DATEDIFF(day, LAST_FLIGHT_DATE, CURRENT_DATE()) > 90 THEN 'Y'
+        ELSE 'N'
+    END AS STALE_MEMBER,
+    EXTRACT_TS,
+    SOURCE_FILE_NAME,
+    LINE_NO,
+    LAST_UPDATED_AT
+FROM MEMBERS_ALL;
+
+-- ----------------------------------------------------------------------------
+-- 9. DYNAMIC ANALYTICAL MART: Member Loyalty 360 Current View
+-- Reads stored redemption totals from MEMBER_LOYALTY_360 (the mart), which are
+-- refreshed each run by the pipeline, and recomputes only Age and Stale_Member
+-- dynamically relative to CURRENT_DATE() using MEMBERS_ALL_CURRENT.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW MEMBER_LOYALTY_360_CURRENT AS
+SELECT
+    m.SOURCE_SYSTEM,
+    m.MEMBER_ID,
+    m.MEMBER_NAME,
+    m.COUNTRY,
+    m.TIER_CODE,
+    m.ENROLLMENT_DATE,
+    m.LAST_FLIGHT_DATE,
+    m.AGE,
+    m.STALE_MEMBER,
+    COALESCE(l.TOTAL_REDEMPTIONS, 0) AS TOTAL_REDEMPTIONS,
+    COALESCE(l.TOTAL_MILES_REDEEMED, 0) AS TOTAL_MILES_REDEEMED,
+    COALESCE(l.PENDING_MILES_REDEEMED, 0) AS PENDING_MILES_REDEEMED,
+    l.LAST_REDEMPTION_DATE,
+    COALESCE(l.TOP_PARTNER, 'None') AS TOP_PARTNER,
+    CURRENT_TIMESTAMP() AS LAST_SYNC_AT
+FROM MEMBERS_ALL_CURRENT m
+LEFT JOIN MEMBER_LOYALTY_360 l
+    ON m.SOURCE_SYSTEM = l.SOURCE_SYSTEM AND m.MEMBER_ID = l.MEMBER_ID;
+
+
+-- ==================== INLINED 03_TRANSFORMATIONS.SQL ====================
+
 -- ============================================================================
 -- SkyPoints Snowflake Staging Load & Country Split Transformation Logic
 -- Implements:
@@ -3813,7 +5289,7 @@ INSERT INTO RAW_MEMBER_LANDING (
 -- ----------------------------------------------------------------------------
 -- STEP 0: Initialize Session Batch ID for Idempotent Execution
 -- ----------------------------------------------------------------------------
-SET run_batch_id = UUID_STRING();
+SET run_batch_id = (SELECT UUID_STRING());
 
 -- STG_MEMBER_PROFILE is per-batch; truncate before loading the incoming batch
 TRUNCATE TABLE STG_MEMBER_PROFILE;
@@ -3887,8 +5363,8 @@ SELECT
         WHEN s.DOB IS NOT NULL AND TRY_TO_DATE(LPAD(s.DOB, 8, '0'), 'DDMMYYYY') IS NULL THEN 'Invalid DOB: unparseable calendar date'
         WHEN LENGTH(s.MEMBER_ID) > 18 THEN 'Member_Id exceeds 18 characters'
         WHEN s.COUNTRY IS NULL THEN 'Unmapped country: Country is required and cannot be empty'
-        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN m.CANONICAL_CODE IS NULL THEN 'Unmapped country'
+        WHEN LENGTH(s.COUNTRY) > 5 THEN 'Country exceeds 5 characters'
         WHEN s.STATE IS NOT NULL AND LENGTH(s.STATE) > 5 THEN 'State exceeds 5 characters'
         WHEN s.POST_CODE IS NOT NULL AND (TRY_TO_NUMBER(s.POST_CODE) IS NULL OR LENGTH(s.POST_CODE) > 5) THEN 'Invalid Post_Code: must be numeric up to 5 digits'
         WHEN s.TIER_CODE IS NOT NULL AND s.TIER_CODE NOT IN ('PLT', 'GLD', 'SLV') THEN 'Invalid domain value: Tier_Code not in (PLT, GLD, SLV)'
@@ -4291,6 +5767,7 @@ USING (
       AND r.value:miles_redeemed IS NOT NULL AND TRY_TO_NUMBER(r.value:miles_redeemed::STRING) >= 0
       AND r.value:partner IS NOT NULL AND NULLIF(TRIM(r.value:partner::STRING), '') IS NOT NULL
       AND r.value:status IS NOT NULL AND NULLIF(TRIM(r.value:status::STRING), '') IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY r.value:txn_id::STRING ORDER BY raw.INGESTED_AT DESC) = 1
 ) src
 ON target.TXN_ID = src.TXN_ID
 WHEN MATCHED THEN
@@ -4309,7 +5786,8 @@ WHEN NOT MATCHED THEN
 
 
 
--- 2. Country Routing & Migration Merges
+-- ==================== INLINED 04_COUNTRY_MERGES.SQL ====================
+
 -- ============================================================================
 -- Static Country MERGE & Migration DELETE Statements for Snowflake
 -- Generated automatically by scripts/generate_country_merges.py
@@ -4687,7 +6165,8 @@ WHERE EXISTS (
 
 
 
--- 3. Mart Aggregation & Batch Finalization
+-- ==================== INLINED 05_MART_AND_FINALIZE.SQL ====================
+
 -- ============================================================================
 -- SkyPoints Step 3: Analytical Mart Build & Finalize Landing Batch Tracking
 -- NOTE: run_batch_id is a session variable initialized in transformations.sql.
@@ -4746,6 +6225,14 @@ AND target.RAW_RECORD_HASH = src.RAW_RECORD_HASH
 WHEN NOT MATCHED THEN
     INSERT (RECORD_ID, RAW_RECORD, RAW_RECORD_HASH, ERROR_REASON, SOURCE_FEED, SOURCE_SYSTEM, SOURCE_FILE_NAME, BATCH_ID, QUARANTINED_AT)
     VALUES (src.RECORD_ID, src.RAW_RECORD, src.RAW_RECORD_HASH, src.ERROR_REASON, src.SOURCE_FEED, src.SOURCE_SYSTEM, src.SOURCE_FILE_NAME, src.BATCH_ID, CURRENT_TIMESTAMP());
+
+-- Remove resolved redemptions from DLQ when ambiguity disappears
+DELETE FROM RAW_DLQ_QUARANTINE
+WHERE SOURCE_FEED = 'STG_REDEMPTIONS_FLATTENED'
+  AND ERROR_REASON = 'Ambiguous member_id across source systems'
+  AND RECORD_ID IN (
+      SELECT red.TXN_ID FROM STG_REDEMPTIONS_FLATTENED red WHERE red.IS_AMBIGUOUS = FALSE
+  );
 
 -- 2. Build or Refresh MEMBER_LOYALTY_360 Mart (Idempotent MERGE for affected members)
 -- Keyed on (SOURCE_SYSTEM, MEMBER_ID) from MEMBERS_ALL_CURRENT; touches only members affected by this batch,
@@ -4855,6 +6342,12 @@ WHEN NOT MATCHED THEN
         src.LAST_REDEMPTION_DATE, src.TOP_PARTNER, CURRENT_TIMESTAMP()
     );
 
+-- Remove members from mart that no longer exist in unified current members view (e.g. cross-country moves or hard deletes)
+DELETE FROM MEMBER_LOYALTY_360
+WHERE (SOURCE_SYSTEM, MEMBER_ID) NOT IN (
+    SELECT SOURCE_SYSTEM, MEMBER_ID FROM MEMBERS_ALL_CURRENT
+);
+
 
 -- ----------------------------------------------------------------------------
 -- STEP 6: Mark Processed Records in Landing Tables for Batch Tracking
@@ -4867,7 +6360,6 @@ WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;
 UPDATE RAW_REDEMPTIONS_LANDING
 SET PROCESSED_AT = CURRENT_TIMESTAMP()
 WHERE BATCH_ID = $run_batch_id AND PROCESSED_AT IS NULL;
-
 
 
 -- Step 6: Single evaluation query returning scenario, expected, actual, PASS/FAIL
@@ -5034,7 +6526,7 @@ WITH AssertionResults AS (
         15 AS test_id,
         'Rerun delta: STG_MEMBER_PROFILE row count unchanged' AS scenario,
         '0' AS expected,
-        TO_VARCHAR((SELECT COUNT(*) FROM STG_MEMBER_PROFILE) - (SELECT STG_MEMBER_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+        TO_VARCHAR((SELECT STG_MEMBER_COUNT FROM POST_RERUN_SNAPSHOT) - (SELECT STG_MEMBER_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 
@@ -5043,7 +6535,7 @@ WITH AssertionResults AS (
         16 AS test_id,
         'Rerun delta: RAW_DLQ_QUARANTINE row count unchanged' AS scenario,
         '0' AS expected,
-        TO_VARCHAR((SELECT COUNT(*) FROM RAW_DLQ_QUARANTINE) - (SELECT DLQ_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+        TO_VARCHAR((SELECT DLQ_COUNT FROM POST_RERUN_SNAPSHOT) - (SELECT DLQ_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 
@@ -5052,7 +6544,7 @@ WITH AssertionResults AS (
         17 AS test_id,
         'Rerun delta: STG_REDEMPTIONS_FLATTENED row count unchanged' AS scenario,
         '0' AS expected,
-        TO_VARCHAR((SELECT COUNT(*) FROM STG_REDEMPTIONS_FLATTENED) - (SELECT STG_REDEMP_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+        TO_VARCHAR((SELECT STG_REDEMP_COUNT FROM POST_RERUN_SNAPSHOT) - (SELECT STG_REDEMP_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 
@@ -5061,7 +6553,7 @@ WITH AssertionResults AS (
         18 AS test_id,
         'Rerun delta: MEMBER_LOYALTY_360 row count unchanged' AS scenario,
         '0' AS expected,
-        TO_VARCHAR((SELECT COUNT(*) FROM MEMBER_LOYALTY_360) - (SELECT MART_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
+        TO_VARCHAR((SELECT MART_COUNT FROM POST_RERUN_SNAPSHOT) - (SELECT MART_COUNT FROM PRE_RERUN_SNAPSHOT)) AS actual
 
     UNION ALL
 

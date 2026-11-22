@@ -184,7 +184,7 @@ def test_snowflake_transformations_and_merge():
     assert "!source sql/snowflake/04_country_merges.generated.sql" in content
 
     # Batch tracking & landing filters (P1 & P6: incremental claiming & finalization)
-    assert "SET run_batch_id = UUID_STRING();" in content
+    assert "SET run_batch_id = (SELECT UUID_STRING());" in content
     assert "TRUNCATE TABLE STG_MEMBER_PROFILE;" in content
     assert "WHERE PROCESSED_AT IS NULL" in content
     assert "UPDATE RAW_MEMBER_LANDING" in content
