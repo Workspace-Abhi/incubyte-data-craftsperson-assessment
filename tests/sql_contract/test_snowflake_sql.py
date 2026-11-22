@@ -243,7 +243,7 @@ def test_snowflake_transformations_and_merge():
     assert "UPDATE STG_REDEMPTIONS_FLATTENED" in finalize_content
     assert "SET IS_AMBIGUOUS" in finalize_content
     assert "DELETE FROM STG_REDEMPTIONS_FLATTENED" not in finalize_content
-    assert "WHERE IS_AMBIGUOUS = FALSE" in finalize_content
+    assert "red.IS_AMBIGUOUS = FALSE" in finalize_content
     assert "target.RAW_RECORD_HASH = src.RAW_RECORD_HASH" in finalize_content
 
     # Task 4 & P6: Incremental MERGE into MEMBER_LOYALTY_360 from MEMBERS_ALL_CURRENT for touched members
@@ -251,7 +251,7 @@ def test_snowflake_transformations_and_merge():
     assert "FROM MEMBERS_ALL_CURRENT m" in finalize_content
     assert "TouchedMembers AS" in finalize_content
     assert "PartnerCounts AS" in finalize_content
-    assert "ORDER BY COUNT(*) DESC, r.PARTNER ASC" in finalize_content
+    assert "ORDER BY COUNT(*) DESC, red.PARTNER ASC" in finalize_content
     assert "red.BATCH_ID = $run_batch_id" in finalize_content
     assert "CREATE OR REPLACE TABLE MEMBER_LOYALTY_360" not in finalize_content
 

@@ -28,8 +28,22 @@ snowsql -c <your_connection> -f sql/snowflake/run_all.sql
 The smoke test suite validates end-to-end data integrity, boundary handling, and idempotent rerun guarantees in an isolated schema `SKYPOINTS_SMOKE_TEST`.
 
 ### Running the Smoke Test
+
+#### Method A: Via Snowflake Web UI (Recommended & Zero Setup)
+1. Open [Snowflake Web Console](https://app.snowflake.com) and open a new **SQL Worksheet**.
+2. Ensure the active role is `ACCOUNTADMIN` and warehouse is `COMPUTE_WH`.
+3. Open [`sql/snowflake/tests/smoke_test_combined.sql`](../sql/snowflake/tests/smoke_test_combined.sql), copy all contents (`Ctrl + A`, `Ctrl + C`), and paste into the worksheet.
+4. Click the dropdown arrow next to the blue **Run** button and select **Run All** (`Ctrl + Shift + Enter`).
+5. View the final tabular assertion results verifying all test scenarios as `PASS`.
+
+#### Method B: Via SnowSQL CLI
 ```bash
 snowsql -c <your_connection> -f sql/snowflake/tests/smoke_test.sql
+```
+
+#### Method C: Via Automated Python Runner
+```bash
+python scripts/run_snowflake_smoke_test.py
 ```
 
 The smoke test executes the following automated workflow:

@@ -35,7 +35,7 @@ INSERT INTO TABLE_USA (
     TIER_CODE, AGENT_NAME, STATE, COUNTRY, POST_CODE, DOB, IS_ACTIVE, AGE, STALE_MEMBER, EXTRACT_TS
 ) VALUES (
     'FLAT_FILE', 'MOVE_101', 'David Miller', DATE '2020-01-01', DATE '2023-08-01',
-    'GLD', 'AgentA', 'CA', 'USA', 90210, DATE '1985-05-03', 'A', 38, 'Y', TIMESTAMP_NTZ '2023-01-01 00:00:00'
+    'GLD', 'AgentA', 'CA', 'USA', 90210, DATE '1985-05-03', 'A', 38, 'Y', '2023-01-01 00:00:00'::TIMESTAMP_NTZ
 );
 
 -- Interrupted batch fixture: simulates an interrupted run that claimed rows with an old BATCH_ID but failed before PROCESSED_AT was stamped
