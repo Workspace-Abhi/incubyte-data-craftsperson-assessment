@@ -29,21 +29,16 @@ The smoke test suite validates end-to-end data integrity, boundary handling, and
 
 ### Running the Smoke Test
 
-#### Method A: Via Snowflake Web UI (Recommended & Zero Setup)
-1. Open [Snowflake Web Console](https://app.snowflake.com) and open a new **SQL Worksheet**.
-2. Ensure the active role is `ACCOUNTADMIN` and warehouse is `COMPUTE_WH`.
-3. Open [`sql/snowflake/tests/smoke_test_combined.sql`](../sql/snowflake/tests/smoke_test_combined.sql), copy all contents (`Ctrl + A`, `Ctrl + C`), and paste into the worksheet.
-4. Click the dropdown arrow next to the blue **Run** button and select **Run All** (`Ctrl + Shift + Enter`).
-5. View the final tabular assertion results verifying all test scenarios as `PASS`.
-
-#### Method B: Via SnowSQL CLI
-```bash
-snowsql -c <your_connection> -f sql/snowflake/tests/smoke_test.sql
-```
-
-#### Method C: Via Automated Python Runner
+#### Method A: Via Automated Python Runner (Recommended & Zero Setup)
+The automated Python runner connects directly to Snowflake using credentials from environment variables (or `.env`), resolves all SQL dependencies in memory, executes all 4 pipeline test stages, and outputs the full assertion table:
 ```bash
 python scripts/run_snowflake_smoke_test.py
+```
+
+#### Method B: Via SnowSQL CLI
+Execute the official smoke test file directly using SnowSQL (which natively executes `!source` directives):
+```bash
+snowsql -c <your_connection> -f sql/snowflake/tests/smoke_test.sql
 ```
 
 The smoke test executes the following automated workflow:
@@ -61,7 +56,7 @@ The smoke test executes the following automated workflow:
 ## 3. Smoke Test Results Verification Matrix
 
 > [!NOTE]
-> **Live Warehouse Execution Verified (34/34 Passed)**: All 34 test scenarios below were executed and verified against a live Snowflake warehouse (`ACCOUNT: HWEAQUL-UO73138`, `WAREHOUSE: COMPUTE_WH`, `SCHEMA: SKYPOINTS_SMOKE_TEST`) via `scripts/run_snowflake_smoke_test.py` and `sql/snowflake/tests/smoke_test_combined.sql`.
+> **Live Warehouse Execution Verified (34/34 Passed)**: All 34 test scenarios below were executed and verified against a live Snowflake warehouse (`ACCOUNT: HWEAQUL-UO73138`, `WAREHOUSE: COMPUTE_WH`, `SCHEMA: SKYPOINTS_SMOKE_TEST`) via `scripts/run_snowflake_smoke_test.py` and `sql/snowflake/tests/smoke_test.sql`.
 
 | Test ID | Scenario Name | Category | Expected Result | Actual Result | Verified Status |
 | :---: | :--- | :--- | :---: | :---: | :---: |

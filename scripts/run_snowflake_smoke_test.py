@@ -6,6 +6,7 @@ Usage:
 import sys
 import os
 import io
+from pathlib import Path
 import snowflake.connector
 
 ACCOUNT = os.environ.get("SNOWFLAKE_ACCOUNT", "HWEAQUL-UO73138")
@@ -13,6 +14,24 @@ USER = os.environ.get("SNOWFLAKE_USER", "ABHISHEKKUMAR.STUDENT1@GMAIL.COM")
 PASSWORD = os.environ.get("SNOWFLAKE_PASSWORD", "TempPassword123!")
 ROLE = os.environ.get("SNOWFLAKE_ROLE", "ACCOUNTADMIN")
 WAREHOUSE = os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+def load_sql_recursive(sql_path: Path) -> str:
+    """Recursively resolve SnowSQL !source directives in memory."""
+    content = sql_path.read_text(encoding="utf-8")
+    lines = []
+    for line in content.splitlines():
+        trimmed = line.strip()
+        if trimmed.startswith("!source "):
+            ref_path = trimmed.split("!source ", 1)[1].strip()
+            full_ref = REPO_ROOT / ref_path
+            lines.append(f"-- >>> INLINED {ref_path}")
+            lines.append(load_sql_recursive(full_ref))
+            lines.append(f"-- <<< END {ref_path}")
+        else:
+            lines.append(line)
+    return "\n".join(lines)
 
 def main():
     print(f"Connecting to Snowflake account {ACCOUNT} as {USER}...")
@@ -34,11 +53,10 @@ def main():
         cur.execute("CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;")
         cur.execute("USE DATABASE SKYPOINTS_DB;")
         
-        # Read combined SQL file
-        sql_file = os.path.join(os.path.dirname(__file__), "..", "sql", "snowflake", "tests", "smoke_test_combined.sql")
-        print(f"Reading {sql_file}...")
-        with open(sql_file, "r", encoding="utf-8") as f:
-            full_sql = f.read()
+        # Read and recursively resolve smoke test SQL in memory
+        smoke_sql_path = REPO_ROOT / "sql" / "snowflake" / "tests" / "smoke_test.sql"
+        print(f"Reading and resolving {smoke_sql_path}...")
+        full_sql = load_sql_recursive(smoke_sql_path)
 
         print("Executing smoke test suite on Snowflake (this takes ~1-2 minutes)...")
         from snowflake.connector.util_text import split_statements

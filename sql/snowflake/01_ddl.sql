@@ -3,10 +3,8 @@
 -- Scalable for billions of daily records across flat files and JSON feeds
 -- ============================================================================
 
--- Database and Schema Setup
+-- Database Setup
 CREATE DATABASE IF NOT EXISTS SKYPOINTS_DB;
-CREATE SCHEMA IF NOT EXISTS SKYPOINTS_DB.CORE;
-USE SCHEMA SKYPOINTS_DB.CORE;
 
 -- ----------------------------------------------------------------------------
 -- 1. RAW LANDING TABLE: Member Profile Flat File
